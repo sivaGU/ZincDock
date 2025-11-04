@@ -4,7 +4,7 @@ A user-friendly Streamlit-based GUI for molecular docking of ligands to metallop
 
 Link: https://metallodock-9rfsp7szmdt7fevwbdb9vh.streamlit.app/
 
-### Addiotional Option 1: Run Locally
+### Additional Option 1: Run Locally
 
 1. **Clone this repository:**
    ```bash
@@ -148,6 +148,7 @@ All executables and parameter files are automatically detected from the `Files_f
 
 For all questions and concerns contact Dr. Sivanesan Dakshanamurthy at sd233@georgetown.edu
 ---
+
 
 
 

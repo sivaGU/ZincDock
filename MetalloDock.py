@@ -1085,15 +1085,6 @@ if __name__ == "__main__":
 st.set_page_config(page_title="Metalloprotein Docking UI (Vina + AD4Zn + SMINA)", layout="wide")
 st.title("🧪 Metalloprotein Docking UI (Vina + AD4Zn + SMINA)")
 
-st.markdown(
-    "- Choose a **working directory** (all outputs live there)\n"
-    "- **Prepare ligands** into `prepared_ligands/ligands_no_hydrogens`\n"
-    "- Build **AD4/AD4Zn** maps; app will **auto-detect & add missing maps** (e.g., S)\n"
-    "- Dock with **Vina (box)**, **AD4 maps**, or **HYBRID (AD4 + SMINA components)**\n"
-    "- **Per-ligand console** shows score or missing-map errors\n"
-    "- **NEW: Get individual scoring component breakdown** (gauss1, gauss2, repulsion, etc.)\n"
-)
-
 # Working directory chooser
 work_dir_input = st.text_input(
     "Working directory",

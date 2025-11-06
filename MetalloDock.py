@@ -2163,9 +2163,9 @@ if run_btn:
 
     # Quick stats
     if backend == "AD4 + SMINA (hybrid)":
-    st.subheader("Hybrid Analysis Results")
+        st.subheader("Hybrid Analysis Results")
         hybrid_success = [r for r in hybrid_rows if r.get('Status') == 'Success']
-        st.write(f"**Hybrid successes:** {len(hybrid_success)}/{len(hybrid_rows)} ligands")
+        st.write(f"Hybrid successes: {len(hybrid_success)}/{len(hybrid_rows)} ligands")
         if hybrid_success:
             comp_df = pd.DataFrame(hybrid_success)
             display_cols = [
@@ -2185,27 +2185,28 @@ if run_btn:
             ]
             available_cols = [c for c in display_cols if c in comp_df.columns]
             if available_cols:
-                st.write("**Individual Scoring Components:**")
+                st.write("Individual Scoring Components:")
                 st.dataframe(comp_df[available_cols], use_container_width=True)
             try:
                 ad4_affs = [float(r['AD4_Affinity']) for r in hybrid_success if r['AD4_Affinity'] not in ('N/A', None, '')]
                 if ad4_affs:
-                    st.write(f"**AD4 Binding Affinities:** {min(ad4_affs):.2f} to {max(ad4_affs):.2f} kcal/mol")
+                    st.write(f"AD4 binding affinities: {min(ad4_affs):.2f} to {max(ad4_affs):.2f} kcal/mol")
                 gauss1_vals = [float(r['gauss1_weighted']) for r in hybrid_success if r.get('gauss1_weighted') not in ('N/A', None, '')]
                 if gauss1_vals:
                     avg_g1 = sum(gauss1_vals) / len(gauss1_vals)
-                    st.write(f"**Average gauss1 (weighted):** {avg_g1:.2f} kcal/mol")
+                    st.write(f"Average gauss1 (weighted): {avg_g1:.2f} kcal/mol")
             except Exception:
                 pass
-    else:
+
+else:
     st.subheader("Vina Summary")
-        try:
-            vina_affs = [float(r["Binding_Affinity"]) for r in rows if r.get("Binding_Affinity") not in ("", "N/A")]
-            if vina_affs:
-                st.write(f"**Binding affinities range:** {min(vina_affs):.1f} to {max(vina_affs):.1f} kcal/mol")
-                st.write(f"**Average binding affinity:** {sum(vina_affs)/len(vina_affs):.1f} kcal/mol")
-        except Exception:
-            pass
+    try:
+        vina_affs = [float(r["Binding_Affinity"]) for r in rows if r.get("Binding_Affinity") not in ("", "N/A")]
+        if vina_affs:
+            st.write(f"Binding affinities range: {min(vina_affs):.1f} to {max(vina_affs):.1f} kcal/mol")
+            st.write(f"Average binding affinity: {sum(vina_affs)/len(vina_affs):.1f} kcal/mol")
+    except Exception:
+        pass
 
     st.download_button(
         "Download results CSV",

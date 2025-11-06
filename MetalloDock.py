@@ -12,12 +12,22 @@ import subprocess
 import platform
 import stat
 from pathlib import Path
-from typing import List, Tuple, Optional, Set
+from typing import List, Tuple, Optional, Set, Dict
 
 import streamlit as st
 import pandas as pd
 import argparse
 import sys
+
+
+SMINA_TERM_WEIGHTS = {
+    "gauss1": -0.035579,
+    "gauss2": -0.005156,
+    "repulsion": 0.840245,
+    "hydrophobic": -0.035069,
+    "hydrogen_bond": -0.587439,
+    "num_tors_div": 1.923,
+}
 
 # ==============================
 # Small helpers
@@ -348,19 +358,28 @@ def _vina_cmd(
     exhaustiveness: int,
     num_modes: int,
     seed: Optional[int],
-    maps_prefix: Optional[Path]
+    maps_prefix: Optional[Path],
+    autodock4_exe: Optional[Path] = None,  # For AD4 docking
 ) -> List[str]:
     cx, cy, cz = center
     sx, sy, sz = size
     cmd = [str(vina_exe)]
+    
+    # Note: Standard Vina doesn't support --maps or --scoring ad4 options
+    # If AD4 mode is requested but vina doesn't support it, fall back to regular vina with box
+    # This ensures docking works even if AD4 maps aren't supported by the vina executable
     if mode == "ad4" and maps_prefix:
+        # Try AD4 maps format first (for modified vina versions that support it)
+        # But if this fails, the caller will detect it and can fall back
         cmd += ["--ligand", str(ligand_file), "--maps", str(maps_prefix), "--scoring", "ad4"]
     else:
+        # Standard Vina format with receptor and search box
         cmd += ["--receptor", str(receptor_file),
                 "--ligand", str(ligand_file),
                 "--center_x", str(cx), "--center_y", str(cy), "--center_z", str(cz),
                 "--size_x", str(sx), "--size_y", str(sy), "--size_z", str(sz),
                 "--scoring", "vina"]
+    
     cmd += ["--exhaustiveness", str(exhaustiveness), "--num_modes", str(num_modes)]
     if seed is not None:
         cmd += ["--seed", str(seed)]
@@ -416,8 +435,49 @@ def _run_one(
 
         if proc.returncode != 0:
             missing = _parse_missing_map(proc.stderr or "")
-            # Log more details about the failure
             error_msg = proc.stderr or proc.stdout or "Unknown error"
+            
+            # Check if the error is because vina doesn't support --maps option
+            # If so, fall back to regular vina with box coordinates
+            if "unknown option maps" in error_msg.lower() or "unknown option" in error_msg.lower():
+                with open(log_file, "a", encoding="utf-8") as lf:
+                    lf.write(f"\n---- WARNING: Vina doesn't support --maps option ----\n")
+                    lf.write(f"Falling back to regular Vina with receptor and search box\n")
+                
+                # Retry with regular vina mode (receptor + box)
+                if mode == "ad4" and maps_prefix:
+                    # Fall back to vina mode with receptor file
+                    cmd = _vina_cmd(vina_exe, "vina", receptor_file, ligand_file, center, size,
+                                  exhaustiveness, num_modes, seed, None, autodock4_exe)
+                    cmd += ["--out", str(out_pdbqt)]
+                    
+                    # Try again with regular vina mode
+                    proc_fallback = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=None if (timeout_s is None or timeout_s == 0) else int(timeout_s)
+                    )
+                    
+                    with open(log_file, "a", encoding="utf-8") as lf:
+                        lf.write(f"\n---- FALLBACK ATTEMPT ----\n")
+                        lf.write(f"Command: {' '.join(cmd)}\n")
+                        lf.write(f"Return code: {proc_fallback.returncode}\n")
+                        if proc_fallback.stdout: lf.write(f"STDOUT: {proc_fallback.stdout}\n")
+                        if proc_fallback.stderr: lf.write(f"STDERR: {proc_fallback.stderr}\n")
+                    
+                    if proc_fallback.returncode == 0 and out_pdbqt.exists() and out_pdbqt.stat().st_size > 0:
+                        # Success with fallback
+                        aff = parse_binding_affinity(out_pdbqt)
+                        nposes = count_poses(out_pdbqt)
+                        if aff not in ("", "N/A") and nposes > 0:
+                            with open(log_file, "a", encoding="utf-8") as lf:
+                                lf.write(f"\n---- FALLBACK SUCCESS ----\n")
+                                lf.write(f"Binding affinity: {aff}\n")
+                                lf.write(f"Number of poses: {nposes}\n")
+                            return (True, aff, nposes, None)
+            
+            # Log original error details
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(f"\n---- ERROR DETAILS ----\n")
                 lf.write(f"Return code: {proc.returncode}\n")
@@ -491,6 +551,7 @@ def run_vina_batch(
     progress_cb=None,
     maps_prefix: Optional[Path] = None,
     skip_if_output_exists: bool = False,
+    autodock4_exe: Optional[Path] = None,  # For AD4 docking
 ) -> List[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     mode = "ad4" if (scoring == "ad4" and maps_prefix) else "vina"
@@ -564,127 +625,243 @@ def run_vina_batch(
 # ==============================
 
 def extract_first_pose_simple(input_pdbqt: Path, output_pdbqt: Path) -> bool:
-    """Extract first pose from multi-model PDBQT (atoms only)"""
+    """Extract first pose from multi-model PDBQT preserving PDBQT directives."""
     try:
-        with open(input_pdbqt, 'r') as f:
+        with open(input_pdbqt, "r") as f:
             lines = f.readlines()
-        
-        with open(output_pdbqt, 'w') as f:
-            in_model = False
-            for line in lines:
-                if line.startswith('MODEL 1'):
+
+        in_model = False
+        pose_lines: List[str] = []
+
+        for line in lines:
+            line = line.replace("\x00", "")
+            if line.startswith("MODEL"):
+                if line.strip().startswith("MODEL 1"):
                     in_model = True
                     continue
-                elif line.startswith('MODEL') and 'MODEL 1' not in line:
+                if in_model:
+                    # next model started; stop after writing
                     break
-                elif line.startswith('ENDMDL'):
-                    break
-                elif in_model and (line.startswith('ATOM') or line.startswith('HETATM')):
-                    f.write(line)
-                elif in_model and line.startswith('TORSDOF'):
-                    f.write(line)
+                continue
+            if line.startswith("ENDMDL"):
+                break
+            if in_model:
+                if line.startswith("REMARK"):
+                    continue
+                pose_lines.append(line)
+
+        if not pose_lines:
+            return False
+
+        with open(output_pdbqt, "w") as f:
+            for ln in pose_lines:
+                f.write(ln)
         return True
     except Exception:
         return False
 
 def extract_all_poses(input_pdbqt: Path, output_dir: Path, max_poses: int = 10) -> List[Path]:
-    """Extract all poses from multi-model PDBQT and save as separate files"""
-    extracted_files = []
+    """Extract all poses from multi-model PDBQT and save as separate files."""
+    extracted_files: List[Path] = []
     try:
-        with open(input_pdbqt, 'r') as f:
+        with open(input_pdbqt, "r") as f:
             lines = f.readlines()
-        
+
         current_pose = 0
-        current_lines = []
+        current_lines: List[str] = []
         in_model = False
-        
+
         for line in lines:
-            if line.startswith('MODEL'):
-                if current_pose > 0 and current_lines:  # Save previous pose
-                    pose_file = output_dir / f"pose_{current_pose}.pdbqt"
-                    with open(pose_file, 'w') as pf:
-                        pf.writelines(current_lines)
-                    extracted_files.append(pose_file)
-                
+            line = line.replace("\x00", "")
+            if line.startswith("MODEL"):
+                if in_model:
+                    # Unexpected nested MODEL, flush existing lines first
+                    if current_lines:
+                        pose_file = output_dir / f"pose_{current_pose}.pdbqt"
+                        with open(pose_file, "w") as pf:
+                            pf.writelines(current_lines)
+                        extracted_files.append(pose_file)
+                        current_lines = []
                 current_pose += 1
                 if current_pose > max_poses:
                     break
-                    
-                current_lines = []
                 in_model = True
+                current_lines = []
                 continue
-            elif line.startswith('ENDMDL'):
+
+            if line.startswith("ENDMDL"):
+                if in_model and current_lines:
+                    pose_file = output_dir / f"pose_{current_pose}.pdbqt"
+                    with open(pose_file, "w") as pf:
+                        pf.writelines(current_lines)
+                    extracted_files.append(pose_file)
                 in_model = False
+                current_lines = []
                 continue
-            elif in_model and (line.startswith('ATOM') or line.startswith('HETATM') or line.startswith('TORSDOF')):
+
+            if in_model:
+                if line.startswith("REMARK"):
+                    continue
                 current_lines.append(line)
-        
-        # Save the last pose if we have one
-        if current_pose > 0 and current_lines:
-            pose_file = output_dir / f"pose_{current_pose}.pdbqt"
-            with open(pose_file, 'w') as pf:
-                pf.writelines(current_lines)
-            extracted_files.append(pose_file)
-        
+
         return extracted_files
     except Exception:
         return []
 
-def parse_smina_atom_terms(atom_terms_file: Path) -> dict:
-    """Parse SMINA atom terms file and return component sums"""
-    
+def parse_smina_atom_terms(
+    atom_terms_file: Path,
+    stdout_text: str,
+    torsion_count: Optional[int]
+) -> Optional[dict]:
+    """Parse SMINA stdout/atom terms and return component breakdown."""
+
+    stdout_text = (stdout_text or "").replace("\x00", "")
+
+    affinity = None
+    intramol = None
+    raw_values: Optional[List[float]] = None
+    collect_raw = False
+
+    # Preload per-atom term sums
+    per_atom_sums = {
+        "gauss1_per_atom": 0.0,
+        "gauss2_per_atom": 0.0,
+        "repulsion_per_atom": 0.0,
+        "hydrophobic_per_atom": 0.0,
+        "hydrogen_bond_per_atom": 0.0,
+    }
+    per_atom_available = False
     try:
-        gauss1 = 0.0
-        gauss2 = 0.0
-        repulsion = 0.0
-        hydrophobic = 0.0
-        h_bond = 0.0
-        
-        with open(atom_terms_file, 'r') as f:
-            lines = f.readlines()[1:]  # Skip header
+        if atom_terms_file.exists():
+            with open(atom_terms_file, "r") as f:
+                lines = f.readlines()[1:]  # skip header
             for line in lines:
-                if line.strip() == 'END':
+                line = line.replace("\x00", "").strip()
+                if not line or line == "END":
                     break
                 parts = line.split()
-                if len(parts) >= 8:
-                    try:
-                        gauss1 += float(parts[4])
-                        gauss2 += float(parts[5])
-                        repulsion += float(parts[6])
-                        hydrophobic += float(parts[7])
-                        h_bond += float(parts[8]) if len(parts) > 8 else 0.0
-                    except ValueError:
-                        continue
-        
-        return {
-            'gauss1': gauss1,
-            'gauss2': gauss2,
-            'repulsion': repulsion,
-            'hydrophobic': hydrophobic,
-            'hydrogen_bond': h_bond
-        }
+                if len(parts) < 8:
+                    continue
+                try:
+                    per_atom_sums["gauss1_per_atom"] += float(parts[3])
+                    per_atom_sums["gauss2_per_atom"] += float(parts[4])
+                    per_atom_sums["repulsion_per_atom"] += float(parts[5])
+                    per_atom_sums["hydrophobic_per_atom"] += float(parts[6])
+                    per_atom_sums["hydrogen_bond_per_atom"] += float(parts[7])
+                    per_atom_available = True
+                except ValueError:
+                    continue
     except Exception:
+        per_atom_available = False
+
+    for line in stdout_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("affinity:"):
+            try:
+                affinity = float(line.split()[1])
+            except (ValueError, IndexError):
+                pass
+        elif line.lower().startswith("intramolecular energy:"):
+            try:
+                intramol = float(line.split()[2])
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("Term values, before weighting"):
+            collect_raw = True
+            continue
+        elif collect_raw and line.startswith("##"):
+            parts = [p for p in line[2:].strip().split() if p]
+            try:
+                raw_values = [float(p) for p in parts]
+            except ValueError:
+                raw_values = None
+            break
+
+    raw_map: Optional[dict] = None
+    if raw_values and len(raw_values) >= 5:
+        raw_map = {
+            "gauss1": raw_values[0],
+            "gauss2": raw_values[1],
+            "repulsion": raw_values[2],
+            "hydrophobic": raw_values[3],
+            "hydrogen_bond": raw_values[4],
+            "num_tors_div": raw_values[5] if len(raw_values) > 5 else 0.0,
+        }
+    elif per_atom_available:
+        raw_map = {
+            "gauss1": per_atom_sums["gauss1_per_atom"],
+            "gauss2": per_atom_sums["gauss2_per_atom"],
+            "repulsion": per_atom_sums["repulsion_per_atom"],
+            "hydrophobic": per_atom_sums["hydrophobic_per_atom"],
+            "hydrogen_bond": per_atom_sums["hydrogen_bond_per_atom"],
+            "num_tors_div": 0.0,
+        }
+
+    if raw_map is None:
         return None
+    if torsion_count is not None:
+        raw_map["num_tors_div"] = float(torsion_count)
+
+    weighted_map = {
+        key: raw_map.get(key, 0.0) * SMINA_TERM_WEIGHTS[key]
+        for key in raw_map
+    }
+
+    total_raw = sum(raw_map.values())
+    total_weighted = sum(weighted_map.values())
+
+    components = {
+        "SMINA_Affinity": affinity,
+        "SMINA_Intramolecular": intramol,
+        "SMINA_Total_Raw": total_raw,
+        "SMINA_Total_Weighted": total_weighted,
+        "SMINA_Num_Torsions": torsion_count,
+        "gauss1_raw": raw_map.get("gauss1", 0.0),
+        "gauss1_coeff": SMINA_TERM_WEIGHTS["gauss1"],
+        "gauss1_weighted": weighted_map.get("gauss1", 0.0),
+        "gauss2_raw": raw_map.get("gauss2", 0.0),
+        "gauss2_coeff": SMINA_TERM_WEIGHTS["gauss2"],
+        "gauss2_weighted": weighted_map.get("gauss2", 0.0),
+        "repulsion_raw": raw_map.get("repulsion", 0.0),
+        "repulsion_coeff": SMINA_TERM_WEIGHTS["repulsion"],
+        "repulsion_weighted": weighted_map.get("repulsion", 0.0),
+        "hydrophobic_raw": raw_map.get("hydrophobic", 0.0),
+        "hydrophobic_coeff": SMINA_TERM_WEIGHTS["hydrophobic"],
+        "hydrophobic_weighted": weighted_map.get("hydrophobic", 0.0),
+        "hydrogen_bond_raw": raw_map.get("hydrogen_bond", 0.0),
+        "hydrogen_bond_coeff": SMINA_TERM_WEIGHTS["hydrogen_bond"],
+        "hydrogen_bond_weighted": weighted_map.get("hydrogen_bond", 0.0),
+        "torsion_raw": raw_map.get("num_tors_div", 0.0),
+        "torsion_coeff": SMINA_TERM_WEIGHTS["num_tors_div"],
+        "torsion_weighted": weighted_map.get("num_tors_div", 0.0),
+    }
+
+    if per_atom_available:
+        components.update(per_atom_sums)
+
+    return components
 
 def parse_ad4_verbose_output(stdout: str) -> dict:
     """Parse AD4 verbose output for energy components"""
     
     result = {
-        'ad4_affinity': None,
-        'ad4_intermolecular': None,
-        'ad4_internal': None,
-        'ad4_torsional': None
+        'AD4_Affinity': None,
+        'AD4_Intermolecular': None,
+        'AD4_Internal': None,
+        'AD4_Torsional': None
     }
     
     for line in stdout.split('\n'):
         if 'Estimated Free Energy of Binding' in line:
-            result['ad4_affinity'] = float(line.split(':')[1].split()[0])
+            result['AD4_Affinity'] = float(line.split(':')[1].split()[0])
         elif '(1) Final Intermolecular Energy' in line:
-            result['ad4_intermolecular'] = float(line.split(':')[1].split()[0])
+            result['AD4_Intermolecular'] = float(line.split(':')[1].split()[0])
         elif '(2) Final Total Internal Energy' in line:
-            result['ad4_internal'] = float(line.split(':')[1].split()[0])
+            result['AD4_Internal'] = float(line.split(':')[1].split()[0])
         elif '(3) Torsional Free Energy' in line:
-            result['ad4_torsional'] = float(line.split(':')[1].split()[0])
+            result['AD4_Torsional'] = float(line.split(':')[1].split()[0])
     
     return result
 
@@ -721,6 +898,33 @@ def hybrid_ad4_smina_single(
         'AD4_Intermolecular': 'N/A',
         'AD4_Internal': 'N/A',
         'AD4_Torsional': 'N/A',
+        'SMINA_Affinity': 'N/A',
+        'SMINA_Intramolecular': 'N/A',
+        'SMINA_Total_Raw': 'N/A',
+        'SMINA_Total_Weighted': 'N/A',
+        'gauss1_raw': 'N/A',
+        'gauss1_coeff': SMINA_TERM_WEIGHTS['gauss1'],
+        'gauss1_weighted': 'N/A',
+        'gauss2_raw': 'N/A',
+        'gauss2_coeff': SMINA_TERM_WEIGHTS['gauss2'],
+        'gauss2_weighted': 'N/A',
+        'repulsion_raw': 'N/A',
+        'repulsion_coeff': SMINA_TERM_WEIGHTS['repulsion'],
+        'repulsion_weighted': 'N/A',
+        'hydrophobic_raw': 'N/A',
+        'hydrophobic_coeff': SMINA_TERM_WEIGHTS['hydrophobic'],
+        'hydrophobic_weighted': 'N/A',
+        'hydrogen_bond_raw': 'N/A',
+        'hydrogen_bond_coeff': SMINA_TERM_WEIGHTS['hydrogen_bond'],
+        'hydrogen_bond_weighted': 'N/A',
+        'torsion_raw': 'N/A',
+        'torsion_coeff': SMINA_TERM_WEIGHTS['num_tors_div'],
+        'torsion_weighted': 'N/A',
+        'gauss1_per_atom': 'N/A',
+        'gauss2_per_atom': 'N/A',
+        'repulsion_per_atom': 'N/A',
+        'hydrophobic_per_atom': 'N/A',
+        'hydrogen_bond_per_atom': 'N/A',
         'gauss1': 'N/A',
         'gauss2': 'N/A',
         'repulsion': 'N/A',
@@ -802,20 +1006,24 @@ def hybrid_ad4_smina_single(
                 if proc_smina.stderr: lf.write("\n---- STDERR ----\n"); lf.write(proc_smina.stderr)
             
             if proc_smina.returncode == 0 and atom_terms_file.exists():
-                components = parse_smina_atom_terms(atom_terms_file)
+                components = parse_smina_atom_terms(atom_terms_file, proc_smina.stdout, n_rot)
                 if components:
-                    # Calculate total score (more negative = better)
-                    total_score = (components.get('gauss1', 0) + components.get('gauss2', 0) + 
-                                 components.get('repulsion', 0) + components.get('hydrophobic', 0) + 
-                                 components.get('hydrogen_bond', 0) + result['N_rot_contribution'])
-                    
-                    if total_score < best_score:
-                        best_score = total_score
+                    metric = components.get('SMINA_Affinity')
+                    if not isinstance(metric, (int, float)):
+                        metric = components.get('SMINA_Total_Weighted')
+                    if isinstance(metric, (int, float)) and metric < best_score:
+                        best_score = metric
                         best_components = components
                         best_pose = i
         
         if best_components:
             result.update(best_components)
+            # Backwards compatibility: populate legacy shorthand columns
+            result['gauss1'] = best_components.get('gauss1_weighted', 'N/A')
+            result['gauss2'] = best_components.get('gauss2_weighted', 'N/A')
+            result['repulsion'] = best_components.get('repulsion_weighted', 'N/A')
+            result['hydrophobic'] = best_components.get('hydrophobic_weighted', 'N/A')
+            result['hydrogen_bond'] = best_components.get('hydrogen_bond_weighted', 'N/A')
             result['Best_Pose'] = best_pose
             result['Status'] = 'Success'
         else:
@@ -1302,32 +1510,23 @@ with st.expander("⚙️ Configuration", expanded=True):
     with c1:
         st.subheader("Executables & Scripts")
         backend = st.radio("Docking backend", [
-            "Vina (box)", 
-            "AD4 maps (AutoGrid4/AD4Zn)", 
-            "HYBRID (AD4 orientation + SMINA components)"
+            "Vina (box)",
+            "AD4 + SMINA (hybrid)"
         ], index=1)
-        
-        # Backend guidance
         if backend == "Vina (box)":
-            st.info("📦 **Vina (box) mode:** Uses regular Vina scoring with a search box. Good for general docking.")
-        elif backend == "AD4 maps (AutoGrid4/AD4Zn)":
-            st.info("🗺️ **AD4 maps mode:** Uses AutoGrid4 maps + AD4Zn parameters. **Required for building maps!** Best for metalloproteins.")
-        elif backend == "HYBRID (AD4 orientation + SMINA components)":
+            st.info("📦 **Vina (box):** standard Vina docking using the search box you define.")
+        else:
             st.info(
-                "🔄 **HYBRID MODE:**\n\n"
-                "1. Docks with AD4 + zinc maps (accurate metalloprotein orientation)\n"
-                "2. Analyzes poses with SMINA (extracts ALL scoring components)\n\n"
-                "**You get:**\n"
-                "- AD4 binding affinity (zinc-specific)\n"
-                "- Individual components: gauss1, gauss2, repulsion, hydrophobic, h_bond, N_rot\n"
-                "- Best of both worlds!"
+                "🔄 **AD4 + SMINA hybrid:** Docks with AD4 (zinc maps) then scores poses with SMINA "
+                "to produce the full component breakdown."
             )
 
         # Auto-detect executables and parameters from Files_for_GUI (no user input needed)
         files_gui_dir = work_dir / "Files_for_GUI"
         import sys
-        
-        autodetect = st.checkbox("Auto-detect metal center (for Vina box)", value=True)
+        autodetect = False
+        if backend == "Vina (box)":
+            autodetect = st.checkbox("Auto-detect metal center (for Vina run)", value=True)
 
     with c2:
         st.subheader("Grid Box Settings")
@@ -1371,7 +1570,8 @@ with st.expander("⚙️ Configuration", expanded=True):
 st.subheader("Docking Parameters")
 p1, p2, p3, p4 = st.columns(4)
 with p1:
-    scoring = st.selectbox("Scoring function", ["ad4", "vina"], index=0)
+    scoring = "ad4" if backend == "AD4 + SMINA (hybrid)" else "vina"
+    st.markdown(f"**Scoring function:** `{scoring}`")
 with p2:
     base_exhaustiveness = st.number_input("Base exhaustiveness", value=64, min_value=1, step=1)
 with p3:
@@ -1478,16 +1678,15 @@ if test_btn:
     else:
         st.error(f"Vina not found in Files_for_GUI: {files_gui_dir / 'vina.exe'}")
 
-    if backend == "AD4 maps (AutoGrid4/AD4Zn)":
-        for name, exe in [("AutoGrid4", autogrid_exe), ("Python", python_exe)]:
-            if exe and exe.exists():
-                st.info(f"{name} OK: {exe}")
-            else:
-                st.error(f"{name} not found in Files_for_GUI.")
-        for name, pth in [("zinc_pseudo.py", zinc_pseudo_py), ("AD4_parameters.dat", base_params), ("AD4Zn.dat (extra)", extra_params)]:
-            status = "✅" if (pth and pth.exists()) else "❌"
-            loc = pth if pth else f"{files_gui_dir / name}"
-            st.write(f"{name}: {loc} {status}")
+    for name, exe in [("AutoGrid4", autogrid_exe), ("Python", python_exe)]:
+        if exe and exe.exists():
+            st.info(f"{name} OK: {exe}")
+        else:
+            st.error(f"{name} not found in Files_for_GUI.")
+    for name, pth in [("zinc_pseudo.py", zinc_pseudo_py), ("AD4_parameters.dat", base_params), ("AD4Zn.dat (extra)", extra_params)]:
+        status = "✅" if (pth and pth.exists()) else "❌"
+        loc = pth if pth else f"{files_gui_dir / name}"
+        st.write(f"{name}: {loc} {status}")
 
 # ==============================
 # AD4 maps builder / updater (auto-detect all ligand types, force-include extras, patch missing)
@@ -1496,6 +1695,9 @@ if test_btn:
 if build_maps_btn:
     # Pre-validation checks
     st.info("🔍 **Pre-validation checks...**")
+    if backend != "AD4 + SMINA (hybrid)":
+        st.error("❌ **Backend mismatch:** switch to 'AD4 + SMINA (hybrid)' to build maps.")
+        st.stop()
     
     # Check receptor file
     if receptor_path is None or not receptor_path.exists():
@@ -1517,11 +1719,7 @@ if build_maps_btn:
     maps_dir = maps_prefix.parent
     maps_dir.mkdir(parents=True, exist_ok=True)
 
-    if backend != "AD4 maps (AutoGrid4/AD4Zn)":
-        st.error("❌ **Backend Mismatch:** You need to use 'AD4 maps (AutoGrid4/AD4Zn)' backend to build maps.")
-        st.info("💡 **Solution:** Go to the Configuration section above and select 'AD4 maps (AutoGrid4/AD4Zn)' as your docking backend, then try building maps again.")
-        st.stop()
-    elif not (autogrid_exe and autogrid_exe.exists()):
+    if not (autogrid_exe and autogrid_exe.exists()):
         st.error("AutoGrid4 executable path is missing.")
     elif receptor_path is None or not receptor_path.exists():
         st.error("Receptor is missing.")
@@ -1667,7 +1865,7 @@ if run_btn:
         st.stop()
 
     cx, cy, cz = float(center_x), float(center_y), float(center_z)
-    if scoring == "vina" and autodetect:
+    if autodetect:
         auto = autodetect_metal_center(receptor_path)
         if auto:
             cx, cy, cz = auto
@@ -1681,10 +1879,9 @@ if run_btn:
         prog.progress(i / n, text=f"{i}/{n} {name} — {stat}")
         console.write(f"{i}/{n}  {name}: {stat}")
 
-    maps_prefix = Path(maps_prefix_input).expanduser().resolve() if (scoring == "ad4") else None
+    maps_prefix = Path(maps_prefix_input).expanduser().resolve() if backend == "AD4 + SMINA (hybrid)" else None
 
-    # If AD4 selected, assert maps exist for all ligand atom types; if missing, tell the user exactly which
-    if scoring == "ad4":
+    if backend == "AD4 + SMINA (hybrid)":
         required_types = sorted(ligand_types_union(ligand_paths) or {"C","F","OA","S","NA"})
         have = list_maps_present(maps_prefix)
         base_req = [
@@ -1704,13 +1901,7 @@ if run_btn:
     tm_mode_key = "no_timeout" if timeout_mode.startswith("No timeout") else "soft_timeout"
 
     with st.spinner("Running docking…"):
-        # Check if hybrid mode
-        if backend == "HYBRID (AD4 orientation + SMINA components)":
-            # Run hybrid analysis
-            if not maps_prefix or not maps_prefix.parent.exists():
-                st.error("AD4 maps required for hybrid mode. Build maps first.")
-                st.stop()
-            
+        if backend == "AD4 + SMINA (hybrid)":
             rows = run_hybrid_batch(
                 vina_exe=vina_exe,
                 receptor_file=receptor_path,
@@ -1724,8 +1915,9 @@ if run_btn:
                 progress_cb=_cb,
                 timeout_s=int(timeout_s)
             )
+            hybrid_rows = rows
+            vina_rows: List[dict] = []
         else:
-            # Regular Vina or AD4 docking
             rows = run_vina_batch(
                 vina_exe=vina_exe,
                 receptor_file=receptor_path,
@@ -1733,7 +1925,7 @@ if run_btn:
                 out_dir=out_dir,
                 center=(cx, cy, cz),
                 size=(float(size_x), float(size_y), float(size_z)),
-                scoring=scoring,
+                scoring="vina",
                 base_exhaustiveness=int(base_exhaustiveness),
                 base_num_modes=int(base_num_modes),
                 timeout_mode=tm_mode_key,
@@ -1742,52 +1934,59 @@ if run_btn:
                 exhu_backoff=float(exhu_backoff),
                 modes_backoff=float(modes_backoff),
                 progress_cb=_cb,
-                maps_prefix=maps_prefix,
+                maps_prefix=None,
                 skip_if_output_exists=bool(skip_exists),
             )
+            vina_rows = rows
+            hybrid_rows: List[dict] = []
 
     df = pd.DataFrame(rows)
     st.success("Docking complete.")
     st.dataframe(df, use_container_width=True)
 
     # Quick stats
-    if backend == "HYBRID (AD4 orientation + SMINA components)":
-        # Display hybrid-specific results
+    if backend == "AD4 + SMINA (hybrid)":
         st.subheader("📊 Hybrid Analysis Results")
-        
-        successful = [r for r in rows if r.get('Status') == 'Success']
-        if successful:
-            st.write(f"**Successfully analyzed:** {len(successful)}/{len(rows)} compounds")
-            
-            # Show component breakdown for successful compounds
-            comp_df = pd.DataFrame(successful)
-            
-            # Select relevant columns
-            display_cols = ['Ligand', 'AD4_Affinity', 'gauss1', 'gauss2', 'repulsion', 
-                           'hydrophobic', 'hydrogen_bond', 'N_rot_contribution', 'N_rot']
-            
-            if all(col in comp_df.columns for col in display_cols):
+        hybrid_success = [r for r in hybrid_rows if r.get('Status') == 'Success']
+        st.write(f"**Hybrid successes:** {len(hybrid_success)}/{len(hybrid_rows)} ligands")
+        if hybrid_success:
+            comp_df = pd.DataFrame(hybrid_success)
+            display_cols = [
+                'Ligand',
+                'AD4_Affinity', 'AD4_Intermolecular', 'AD4_Internal', 'AD4_Torsional',
+                'SMINA_Affinity', 'SMINA_Intramolecular', 'SMINA_Total_Weighted',
+                'gauss1_raw', 'gauss1_coeff', 'gauss1_weighted',
+                'gauss2_raw', 'gauss2_coeff', 'gauss2_weighted',
+                'repulsion_raw', 'repulsion_coeff', 'repulsion_weighted',
+                'hydrophobic_raw', 'hydrophobic_coeff', 'hydrophobic_weighted',
+                'hydrogen_bond_raw', 'hydrogen_bond_coeff', 'hydrogen_bond_weighted',
+                'torsion_raw', 'torsion_coeff', 'torsion_weighted',
+                'SMINA_Num_Torsions',
+                'gauss1_per_atom', 'gauss2_per_atom', 'repulsion_per_atom',
+                'hydrophobic_per_atom', 'hydrogen_bond_per_atom',
+                'Num_Poses', 'Best_Pose'
+            ]
+            available_cols = [c for c in display_cols if c in comp_df.columns]
+            if available_cols:
                 st.write("**Individual Scoring Components:**")
-                st.dataframe(comp_df[display_cols], use_container_width=True)
-                
-                # Component statistics
-                try:
-                    ad4_affs = [float(r['AD4_Affinity']) for r in successful if r['AD4_Affinity'] not in ('N/A', None, '')]
-                    if ad4_affs:
-                        st.write(f"**AD4 Binding Affinities:** {min(ad4_affs):.2f} to {max(ad4_affs):.2f} kcal/mol")
-                    
-                    gauss1_vals = [float(r['gauss1']) for r in successful if r['gauss1'] not in ('N/A', None, '')]
-                    if gauss1_vals:
-                        avg_g1 = sum(gauss1_vals) / len(gauss1_vals)
-                        st.write(f"**Average gauss1 (shape fit):** {avg_g1:.2f} kcal/mol")
-                except Exception:
-                    pass
+                st.dataframe(comp_df[available_cols], use_container_width=True)
+            try:
+                ad4_affs = [float(r['AD4_Affinity']) for r in hybrid_success if r['AD4_Affinity'] not in ('N/A', None, '')]
+                if ad4_affs:
+                    st.write(f"**AD4 Binding Affinities:** {min(ad4_affs):.2f} to {max(ad4_affs):.2f} kcal/mol")
+                gauss1_vals = [float(r['gauss1_weighted']) for r in hybrid_success if r.get('gauss1_weighted') not in ('N/A', None, '')]
+                if gauss1_vals:
+                    avg_g1 = sum(gauss1_vals) / len(gauss1_vals)
+                    st.write(f"**Average gauss1 (weighted):** {avg_g1:.2f} kcal/mol")
+            except Exception:
+                pass
     else:
+        st.subheader("📦 Vina Summary")
         try:
-            aff = [float(r["Binding_Affinity"]) for r in rows if r["Binding_Affinity"] not in ("", "N/A")]
-            if aff:
-                st.write(f"**Binding affinities range:** {min(aff):.1f} to {max(aff):.1f} kcal/mol")
-                st.write(f"**Average binding affinity:** {sum(aff)/len(aff):.1f} kcal/mol")
+            vina_affs = [float(r["Binding_Affinity"]) for r in rows if r.get("Binding_Affinity") not in ("", "N/A")]
+            if vina_affs:
+                st.write(f"**Binding affinities range:** {min(vina_affs):.1f} to {max(vina_affs):.1f} kcal/mol")
+                st.write(f"**Average binding affinity:** {sum(vina_affs)/len(vina_affs):.1f} kcal/mol")
         except Exception:
             pass
 

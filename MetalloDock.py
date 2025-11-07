@@ -299,6 +299,52 @@ def list_maps_present(maps_prefix: Path) -> Set[str]:
             present.add(t)
     return present
 
+def _ensure_executable(exe: Optional[Path], work_dir: Path, temp_subdir: str) -> Optional[Path]:
+    """Ensure an executable is runnable on Linux by chmod'ing or copying to a temp dir."""
+    if exe is None:
+        return None
+
+    exe = Path(exe)
+    if not exe.exists():
+        return exe
+
+    if platform.system() == "Windows":
+        return exe
+
+    if os.access(exe, os.X_OK):
+        return exe
+
+    try:
+        current_stat = os.stat(exe)
+        new_mode = current_stat.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        os.chmod(exe, new_mode)
+        if os.access(exe, os.X_OK):
+            return exe
+        os.chmod(exe, 0o755)
+        if os.access(exe, os.X_OK):
+            return exe
+    except Exception:
+        pass
+
+    temp_dir = work_dir / temp_subdir
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_exe = temp_dir / exe.name
+    try:
+        shutil.copy2(exe, temp_exe)
+        os.chmod(temp_exe, 0o755)
+        if os.access(temp_exe, os.X_OK):
+            return temp_exe
+    except Exception as copy_exc:
+        raise PermissionError(
+            f"Executable {exe} is not runnable and could not be copied to {temp_exe}. "
+            "Ensure the binary has execute permissions before deployment (git update-index --chmod=+x)."
+        ) from copy_exc
+
+    raise PermissionError(
+        f"Executable {exe} is not runnable even after attempting to set permissions. "
+        "Set chmod +x on the file before pushing to Streamlit."
+    )
+
 # ==============================
 # Docking (no-timeout option + retries/backoff + console prints)
 # ==============================
@@ -1305,6 +1351,13 @@ else:
     if not autogrid_exe:
         # Fallback: try autogrid4.exe in case it's there
         autogrid_exe = (files_gui_dir / "autogrid4.exe").resolve() if (files_gui_dir / "autogrid4.exe").exists() else None
+
+try:
+    vina_exe = _ensure_executable(vina_exe, work_dir, "_vina_bin")
+    autogrid_exe = _ensure_executable(autogrid_exe, work_dir, "_autogrid_bin")
+except PermissionError as exec_exc:
+    st.error(str(exec_exc))
+    st.stop()
 
 python_exe = Path(sys.executable)
 zinc_pseudo_py = (files_gui_dir / "zinc_pseudo.py").resolve() if (files_gui_dir / "zinc_pseudo.py").exists() else None

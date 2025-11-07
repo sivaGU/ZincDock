@@ -26,6 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import stat
+import hashlib
+import re
 
 import streamlit as st
 
@@ -130,6 +132,7 @@ class DockingInputs:
 class DockingOutputs:
     workdir: Path
     receptor_tz: Path
+    maps_dir: Path
     gpf_file: Path
     grid_log: Optional[Path]
     vina_out: Optional[Path]
@@ -185,6 +188,17 @@ def _parse_pdbqt_atom_types(path: Path) -> List[str]:
     return sorted(types)
 
 
+def _slugify(value: str, fallback: str = "grid") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+    cleaned = re.sub(r"_{2,}", "_", cleaned)
+    return cleaned or fallback
+
+
+def _hash_grid_signature(center: Tuple[float, float, float], size: Tuple[int, int, int]) -> str:
+    payload = f"{center}-{size}".encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()[:10]
+
+
 def _run_subprocess(
     command: Sequence[str],
     cwd: Optional[Path] = None,
@@ -217,13 +231,16 @@ def _run_zinc_pseudo(receptor: Path, output: Path) -> subprocess.CompletedProces
 
 def _build_gpf_file(
     inputs: DockingInputs,
-    workdir: Path,
+    maps_dir: Path,
     map_prefix: str,
     receptor_tz: Path,
     parameter_override: Optional[str] = None,
 ) -> Path:
-    atom_types = _parse_pdbqt_atom_types(inputs.ligand)
-    atom_types = [atype for atype in atom_types if atype] or ["C"]
+    ligand_types = _parse_pdbqt_atom_types(inputs.ligand)
+    ligand_types = [atype for atype in ligand_types if atype] or ["C"]
+
+    receptor_types = _parse_pdbqt_atom_types(receptor_tz)
+    receptor_types = [atype for atype in receptor_types if atype]
 
     gpf_lines = [
         f"npts {inputs.grid_size[0]} {inputs.grid_size[1]} {inputs.grid_size[2]}",
@@ -236,7 +253,12 @@ def _build_gpf_file(
         f"ligand {inputs.ligand.name}",
     ]
 
-    for atype in atom_types:
+    if receptor_types:
+        gpf_lines.append(f"receptor_types {' '.join(receptor_types)}")
+    if ligand_types:
+        gpf_lines.append(f"ligand_types {' '.join(ligand_types)}")
+
+    for atype in ligand_types:
         gpf_lines.append(f"map {map_prefix}.{atype}.map")
 
     gpf_lines.extend(
@@ -248,7 +270,7 @@ def _build_gpf_file(
         ]
     )
 
-    gpf_path = workdir / f"{map_prefix}.gpf"
+    gpf_path = maps_dir / f"{map_prefix}.gpf"
     gpf_path.write_text("\n".join(gpf_lines) + "\n", encoding="utf-8")
     return gpf_path
 
@@ -293,16 +315,42 @@ def run_docking(inputs: DockingInputs, demo_mode: bool = False) -> DockingOutput
             f"{zinc_proc.stdout}\n{zinc_proc.stderr}"
         )
 
-    map_prefix = inputs.map_prefix or f"{inputs.receptor.stem}_maps"
+    grid_hash = _hash_grid_signature(inputs.grid_center, inputs.grid_size)
+    prefix_hint = inputs.map_prefix or f"{inputs.receptor.stem}_{grid_hash}"
+    map_prefix = _slugify(prefix_hint)
+
+    maps_dir = workdir / "ad4_maps" / map_prefix
+    maps_dir.mkdir(parents=True, exist_ok=True)
+
+    receptor_tz_for_maps = maps_dir / receptor_tz.name
+    ligand_for_maps = maps_dir / ligand_local.name
+    parameter_for_maps = maps_dir / parameter_local.name
+    shutil.copy2(receptor_tz, receptor_tz_for_maps)
+    shutil.copy2(ligand_local, ligand_for_maps)
+    shutil.copy2(parameter_local, parameter_for_maps)
+
     gpf_path = _build_gpf_file(
         inputs,
-        workdir,
+        maps_dir,
         map_prefix,
-        receptor_tz,
-        parameter_override=parameter_local.name,
+        receptor_tz_for_maps,
+        parameter_override=parameter_for_maps.name,
     )
 
-    grid_log = workdir / f"{map_prefix}.glg"
+    config_path = maps_dir / f"{map_prefix}_grid_config.json"
+    config_payload = {
+        "receptor": str(inputs.receptor),
+        "ligand": str(inputs.ligand),
+        "parameter_file": str(inputs.parameter_file),
+        "grid_center": inputs.grid_center,
+        "grid_size": inputs.grid_size,
+        "spacing": inputs.spacing,
+        "generated_at": timestamp,
+        "map_prefix": map_prefix,
+    }
+    config_path.write_text(json.dumps(config_payload, indent=2), encoding="utf-8")
+
+    grid_log = maps_dir / f"{map_prefix}.glg"
     autogrid_cmd = [
         str(bins["autogrid"]),
         "-p",
@@ -310,7 +358,7 @@ def run_docking(inputs: DockingInputs, demo_mode: bool = False) -> DockingOutput
         "-l",
         str(grid_log),
     ]
-    grid_proc = _run_subprocess(autogrid_cmd, cwd=workdir)
+    grid_proc = _run_subprocess(autogrid_cmd, cwd=maps_dir)
     if grid_proc.returncode != 0:
         raise DockingError(
             "AutoGrid failed. Review the log for details:\n"
@@ -319,12 +367,13 @@ def run_docking(inputs: DockingInputs, demo_mode: bool = False) -> DockingOutput
 
     vina_out = workdir / f"{inputs.ligand.stem}_ad4_vina_out.pdbqt"
     vina_log = workdir / f"{inputs.ligand.stem}_ad4_vina.log"
+    maps_prefix_path = maps_dir / map_prefix
     vina_cmd = [
         str(bins["vina"]),
         "--ligand",
         str(ligand_local),
         "--maps",
-        map_prefix,
+        str(maps_prefix_path),
         "--scoring",
         "ad4",
         "--exhaustiveness",
@@ -349,6 +398,8 @@ def run_docking(inputs: DockingInputs, demo_mode: bool = False) -> DockingOutput
         "command_autogrid": " ".join(autogrid_cmd),
         "command_vina": " ".join(vina_cmd),
         "parameter_file": parameter_local.name,
+        "maps_directory": str(maps_dir),
+        "grid_config": str(config_path),
         "zinc_stdout": zinc_proc.stdout,
         "zinc_stderr": zinc_proc.stderr,
         "autogrid_stdout": grid_proc.stdout,
@@ -360,6 +411,7 @@ def run_docking(inputs: DockingInputs, demo_mode: bool = False) -> DockingOutput
     outputs = DockingOutputs(
         workdir=workdir,
         receptor_tz=receptor_tz,
+        maps_dir=maps_dir,
         gpf_file=gpf_path,
         grid_log=grid_log if grid_log.exists() else None,
         vina_out=vina_out if vina_out.exists() else None,
@@ -504,9 +556,12 @@ def _render_run_summary(outputs: DockingOutputs) -> None:
         f"""
         **Work directory:** `{outputs.workdir}`
 
+        **Maps directory:** `{outputs.maps_dir}`
+
         **Generated files**
         - TZ receptor: `{outputs.receptor_tz.name}`
         - Grid params: `{outputs.gpf_file.name}`
+        - Grid config: `{outputs.gpf_file.stem}_grid_config.json`
         - Vina poses: `{outputs.vina_out.name if outputs.vina_out else 'n/a'}`
         - Vina log: `{outputs.vina_log.name if outputs.vina_log else 'n/a'}`
         """

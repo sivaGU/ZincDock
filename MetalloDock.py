@@ -1277,21 +1277,21 @@ with st.expander("Configuration", expanded=True):
         st.subheader("Grid Box Settings")
         grid_c1, grid_c2, grid_c3 = st.columns(3)
         with grid_c1:
-            center_x = st.number_input("center_x", value=24.654, format="%.3f")
+            center_x = st.number_input("center_x", value=-6.421, format="%.3f")
         with grid_c2:
-            center_y = st.number_input("center_y", value=-0.568, format="%.3f")
+            center_y = st.number_input("center_y", value=0.342, format="%.3f")
         with grid_c3:
-            center_z = st.number_input("center_z", value=-1.090, format="%.3f")
+            center_z = st.number_input("center_z", value=17.256, format="%.3f")
 
         sz1, sz2, sz3 = st.columns(3)
         with sz1:
-            size_x = st.number_input("size_x (Å)", value=28.0, min_value=1.0, step=0.25)
+            size_x = st.number_input("size_x (Å)", value=20.0, min_value=1.0, step=0.25)
         with sz2:
-            size_y = st.number_input("size_y (Å)", value=30.0, min_value=1.0, step=0.25)
+            size_y = st.number_input("size_y (Å)", value=20.0, min_value=1.0, step=0.25)
         with sz3:
-            size_z = st.number_input("size_z (Å)", value=28.0, min_value=1.0, step=0.25)
+            size_z = st.number_input("size_z (Å)", value=20.0, min_value=1.0, step=0.25)
 
-        spacing = st.number_input("AD4 grid spacing (Å)", value=0.375, min_value=0.2, max_value=1.0, step=0.025)
+        spacing = st.number_input("AD4 grid spacing (Å)", value=0.38, min_value=0.2, max_value=1.0, step=0.025)
 
         st.markdown("**Maps**")
         maps_prefix_input = st.text_input(
@@ -1696,7 +1696,38 @@ if run_btn:
     if rows:
         df = pd.DataFrame(rows)
         st.success("Docking complete.")
-        st.dataframe(df, use_container_width=True)
+        drop_cols = [c for c in df.columns if c.startswith("AD4_")]
+        display_df = df[[c for c in df.columns if c not in drop_cols]]
+        st.dataframe(display_df, use_container_width=True)
+
+        st.subheader("Result Files")
+        for idx, row in enumerate(rows):
+            ligand_name = row.get("Ligand", "Ligand")
+            out_path = row.get("Output_File")
+            log_path = row.get("Log_File")
+            cols = st.columns(2)
+            with cols[0]:
+                if out_path and Path(out_path).exists():
+                    with open(out_path, "rb") as f:
+                        st.download_button(
+                            label=f"Download {ligand_name} PDBQT",
+                            data=f.read(),
+                            file_name=Path(out_path).name,
+                            key=f"dl_pdbqt_{idx}"
+                        )
+                else:
+                    st.caption(f"No PDBQT for {ligand_name}")
+            with cols[1]:
+                if log_path and Path(log_path).exists():
+                    with open(log_path, "rb") as f:
+                        st.download_button(
+                            label=f"Download {ligand_name} log",
+                            data=f.read(),
+                            file_name=Path(log_path).name,
+                            key=f"dl_log_{idx}"
+                        )
+                else:
+                    st.caption(f"No log for {ligand_name}")
 
         # Quick stats
         if backend == "AD4 (maps)":

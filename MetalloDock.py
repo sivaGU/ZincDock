@@ -1,3 +1,26 @@
+# Demo preset defaults
+DEMO_PRESETS: Dict[str, Dict[str, Tuple[float, float, float]]] = {
+    "Carbonic Anhydrase I": {
+        "center": (29.951, 0.420, -4.735),
+        "size": (16.0, 18.0, 16.0),
+    },
+    "Carbonic Anhydrase II": {
+        "center": (-6.421, 0.342, 17.256),
+        "size": (20.0, 20.0, 20.0),
+    },
+}
+
+DEMO_PARAM_DEFAULTS = {
+    "base_exhaustiveness": 64,
+    "base_num_modes": 10,
+    "output_name": "PFAS_Docking_Results",
+    "timeout_mode": "No timeout (recommended)",
+    "timeout_s": 300,
+    "max_retries": 2,
+    "skip_existing": False,
+    "exhaustiveness_retry": 1.50,
+    "num_modes_retry": 1.25,
+}
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -1251,6 +1274,30 @@ work_dir = Path(work_dir_input).expanduser().resolve()
 work_dir.mkdir(parents=True, exist_ok=True)
 st.caption(f"Using working directory: `{work_dir}`")
 
+# Demo preset controls
+_demo_default_center: Optional[Tuple[float, float, float]] = None
+_demo_default_size: Optional[Tuple[float, float, float]] = None
+_demo_default_spacing: Optional[float] = None
+demo_selected_label: Optional[str] = None
+
+if page == "Demo":
+    st.subheader("Choose Demo Receptor Preset")
+    preset_cols = st.columns(len(DEMO_PRESETS))
+    for idx, (label, settings) in enumerate(DEMO_PRESETS.items()):
+        if preset_cols[idx].button(label, key=f"demo_preset_{label}"):
+            st.session_state["demo_selected_preset"] = label
+
+    demo_selected_label = st.session_state.get("demo_selected_preset", next(iter(DEMO_PRESETS)))
+    demo_preset_info = DEMO_PRESETS[demo_selected_label]
+    _demo_default_center = demo_preset_info["center"]
+    _demo_default_size = demo_preset_info["size"]
+    _demo_default_spacing = 0.375
+else:
+    demo_selected_label = None
+    _demo_default_center = None
+    _demo_default_size = None
+    _demo_default_spacing = None
+
 # Receptor and Ligand Setup
 receptor_default_path = str((work_dir / "receptor.pdbqt").resolve())
 
@@ -1360,6 +1407,16 @@ if page_mode == "vina":
         "spacing": 0.0,
     }
     maps_prefix_default = str((work_dir / "ad4_maps" / "receptor_maps").resolve())
+elif page == "Demo":
+    allowed_backends = ["AD4 (maps)"]
+    default_backend_label = "AD4 (maps)"
+    grid_defaults = {
+        "center": _demo_default_center,
+        "size": _demo_default_size,
+        "spacing": _demo_default_spacing,
+    }
+    preset_slug = demo_selected_label.replace(" ", "_").lower()
+    maps_prefix_default = str((work_dir / "ad4_maps" / preset_slug).resolve())
 elif page_mode == "ad4":
     allowed_backends = ["AD4 (maps)"]
     default_backend_label = "AD4 (maps)"
@@ -1420,17 +1477,28 @@ with st.expander("Configuration", expanded=True):
         default_size = grid_defaults["size"]
         default_spacing = grid_defaults["spacing"]
 
-        for idx, axis in enumerate(["x", "y", "z"]):
-            center_key = center_keys[axis]
-            size_key = size_keys[axis]
-            if center_key not in st.session_state:
+        if page == "Demo":
+            for idx, axis in enumerate(["x", "y", "z"]):
+                center_key = center_keys[axis]
+                size_key = size_keys[axis]
                 st.session_state[center_key] = default_center[idx]
-            if size_key not in st.session_state:
                 st.session_state[size_key] = default_size[idx]
-        if spacing_key not in st.session_state:
             st.session_state[spacing_key] = default_spacing
-        if f"{state_prefix}_maps_prefix" not in st.session_state:
             st.session_state[f"{state_prefix}_maps_prefix"] = maps_prefix_default
+        else:
+            for idx, axis in enumerate(["x", "y", "z"]):
+                center_key = center_keys[axis]
+                size_key = size_keys[axis]
+                if center_key not in st.session_state:
+                    st.session_state[center_key] = default_center[idx]
+                if size_key not in st.session_state:
+                    st.session_state[size_key] = default_size[idx]
+            if spacing_key not in st.session_state:
+                st.session_state[spacing_key] = default_spacing
+            if f"{state_prefix}_maps_prefix" not in st.session_state:
+                st.session_state[f"{state_prefix}_maps_prefix"] = maps_prefix_default
+
+        grid_disabled = page == "Demo"
 
         grid_c1, grid_c2, grid_c3 = st.columns(3)
         with grid_c1:
@@ -1438,21 +1506,24 @@ with st.expander("Configuration", expanded=True):
                 "center_x",
                 value=st.session_state[center_keys["x"]],
                 format="%.3f",
-                key=center_keys["x"]
+                key=center_keys["x"],
+                disabled=grid_disabled
             )
         with grid_c2:
             center_y = st.number_input(
                 "center_y",
                 value=st.session_state[center_keys["y"]],
                 format="%.3f",
-                key=center_keys["y"]
+                key=center_keys["y"],
+                disabled=grid_disabled
             )
         with grid_c3:
             center_z = st.number_input(
                 "center_z",
                 value=st.session_state[center_keys["z"]],
                 format="%.3f",
-                key=center_keys["z"]
+                key=center_keys["z"],
+                disabled=grid_disabled
             )
 
         sz1, sz2, sz3 = st.columns(3)
@@ -1462,7 +1533,8 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[size_keys["x"]],
                 min_value=0.0,
                 step=0.25,
-                key=size_keys["x"]
+                key=size_keys["x"],
+                disabled=grid_disabled
             )
         with sz2:
             size_y = st.number_input(
@@ -1470,7 +1542,8 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[size_keys["y"]],
                 min_value=0.0,
                 step=0.25,
-                key=size_keys["y"]
+                key=size_keys["y"],
+                disabled=grid_disabled
             )
         with sz3:
             size_z = st.number_input(
@@ -1478,7 +1551,8 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[size_keys["z"]],
                 min_value=0.0,
                 step=0.25,
-                key=size_keys["z"]
+                key=size_keys["z"],
+                disabled=grid_disabled
             )
 
         spacing = st.number_input(
@@ -1487,7 +1561,8 @@ with st.expander("Configuration", expanded=True):
             min_value=0.0,
             max_value=1.0,
             step=0.01,
-            key=spacing_key
+            key=spacing_key,
+            disabled=grid_disabled
         )
 
         if "AD4 (maps)" in allowed_backends:
@@ -1523,31 +1598,93 @@ is_windows = platform.system() == "Windows"
 
 st.subheader("Docking Parameters")
 p1, p2, p3, p4 = st.columns(4)
+params_disabled = page == "Demo"
 with p1:
     scoring = "ad4" if backend == "AD4 (maps)" else "vina"
     st.markdown(f"**Scoring function:** `{scoring}`")
 with p2:
-    base_exhaustiveness = st.number_input("Base exhaustiveness", value=64, min_value=1, step=1)
+    base_exhaustiveness = st.number_input(
+        "Base exhaustiveness",
+        value=DEMO_PARAM_DEFAULTS["base_exhaustiveness"],
+        min_value=1,
+        step=1,
+        key=f"{state_prefix}_base_exhaustiveness",
+        disabled=params_disabled
+    )
 with p3:
-    base_num_modes = st.number_input("Base num_modes", value=10, min_value=1, step=1)
+    base_num_modes = st.number_input(
+        "Base num_modes",
+        value=DEMO_PARAM_DEFAULTS["base_num_modes"],
+        min_value=1,
+        step=1,
+        key=f"{state_prefix}_base_num_modes",
+        disabled=params_disabled
+    )
 with p4:
-    out_dir_name = st.text_input("Output folder name", value="PFAS_Docking_Results")
+    out_dir_name = st.text_input(
+        "Output folder name",
+        value=DEMO_PARAM_DEFAULTS["output_name"],
+        key=f"{state_prefix}_output_name",
+        disabled=params_disabled
+    )
+
+timeout_options = ["No timeout (recommended)", "Soft timeout with retries"]
+t_default_index = timeout_options.index(DEMO_PARAM_DEFAULTS["timeout_mode"])
 
 t1, t2, t3, t4 = st.columns(4)
 with t1:
-    timeout_mode = st.selectbox("Timeout mode", ["No timeout (recommended)", "Soft timeout with retries"], index=0)
+    timeout_mode = st.selectbox(
+        "Timeout mode",
+        timeout_options,
+        index=t_default_index,
+        key=f"{state_prefix}_timeout_mode",
+        disabled=params_disabled
+    )
 with t2:
-    timeout_s = st.number_input("Per-ligand timeout (s) if using soft timeout", value=300, min_value=30, step=10)
+    timeout_s = st.number_input(
+        "Per-ligand timeout (s) if using soft timeout",
+        value=DEMO_PARAM_DEFAULTS["timeout_s"],
+        min_value=30,
+        step=10,
+        key=f"{state_prefix}_timeout_s",
+        disabled=params_disabled
+    )
 with t3:
-    max_retries = st.number_input("Max retries on failure", value=2, min_value=0, step=1)
+    max_retries = st.number_input(
+        "Max retries on failure",
+        value=DEMO_PARAM_DEFAULTS["max_retries"],
+        min_value=0,
+        step=1,
+        key=f"{state_prefix}_max_retries",
+        disabled=params_disabled
+    )
 with t4:
-    skip_exists = st.checkbox("Skip ligands with existing outputs", value=False)
+    skip_exists = st.checkbox(
+        "Skip ligands with existing outputs",
+        value=DEMO_PARAM_DEFAULTS["skip_existing"],
+        key=f"{state_prefix}_skip_exists",
+        disabled=params_disabled
+    )
 
 b1, b2 = st.columns(2)
 with b1:
-    exhu_backoff = st.number_input("Exhaustiveness multiplier on retry", value=1.5, min_value=1.0, step=0.1)
+    exhu_backoff = st.number_input(
+        "Exhaustiveness multiplier on retry",
+        value=DEMO_PARAM_DEFAULTS["exhaustiveness_retry"],
+        min_value=1.0,
+        step=0.1,
+        key=f"{state_prefix}_exhaustiveness_retry",
+        disabled=params_disabled
+    )
 with b2:
-    modes_backoff = st.number_input("num_modes multiplier on retry", value=1.25, min_value=1.0, step=0.05)
+    modes_backoff = st.number_input(
+        "num_modes multiplier on retry",
+        value=DEMO_PARAM_DEFAULTS["num_modes_retry"],
+        min_value=1.0,
+        step=0.05,
+        key=f"{state_prefix}_num_modes_retry",
+        disabled=params_disabled
+    )
 
 # Detect operating system
 exe_ext = ".exe" if is_windows else ""

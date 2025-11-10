@@ -15,20 +15,20 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Set, Dict
 
 REPO_ROOT = Path(__file__).resolve().parent
-DEMO_ASSETS_DIR = REPO_ROOT / "MetalloDock Receptors and Ligands"
+DEMO_RECEPTOR_DIR = REPO_ROOT / "Carbonic Anhydrase Receptor Files"
 DEMO_RECEPTOR_SETTINGS = {
     "Carbonic Anhydrase I (7Q0D)": {
-        "path": DEMO_ASSETS_DIR / "Carbonic_Anhydrase_I.pdbqt",
+        "path": DEMO_RECEPTOR_DIR / "Carbonic_Anhydrase_I.pdbqt",
         "center": (29.951, 0.420, -4.735),
         "size": (16.0, 18.0, 16.0),
     },
     "Carbonic Anhydrase II (2VVB)": {
-        "path": DEMO_ASSETS_DIR / "Carbonic_Anhydrase_II.pdbqt",
+        "path": DEMO_RECEPTOR_DIR / "Carbonic_Anhydrase_II.pdbqt",
         "center": (-6.421, 0.342, 17.256),
         "size": (20.0, 20.0, 20.0),
     },
 }
-DEMO_LIGAND_SOURCE_DIR = DEMO_ASSETS_DIR / "18 PFAS"
+DEMO_LIGAND_SOURCE_DIR = REPO_ROOT / "18 PFAS Ligands"
 
 import streamlit as st
 import pandas as pd
@@ -1285,32 +1285,34 @@ if page_mode == "demo":
     demo_assets_dir = work_dir / "MetalloDock_demo_assets"
     demo_assets_dir.mkdir(parents=True, exist_ok=True)
     demo_receptor_dst = demo_assets_dir / receptor_info["path"].name
+
+    demo_upload = st.file_uploader("Optional: upload a receptor (PDBQT)", type=["pdbqt"], key="demo_receptor_upload")
+    if st.button("Use bundled receptor", key="demo_prepare_receptor"):
+        shutil.copy2(receptor_info["path"], demo_receptor_dst)
+        st.success(f"Copied demo receptor to {demo_receptor_dst}")
+
+    if demo_upload is not None:
+        demo_receptor_dst.write(demo_upload.getbuffer())
+        st.info(f"Using uploaded receptor: {demo_receptor_dst}")
+    elif not demo_receptor_dst.exists() and receptor_info["path"].exists():
+        shutil.copy2(receptor_info["path"], demo_receptor_dst)
+    receptor_path = demo_receptor_dst if demo_receptor_dst.exists() else receptor_info["path"]
+
     ligand_files = sorted(DEMO_LIGAND_SOURCE_DIR.glob("*.pdbqt"))
     ligand_labels = [p.name for p in ligand_files]
-    if st.button("Prepare demo receptor & ligands", key="demo_prepare"):
-        shutil.copy2(receptor_info["path"], demo_receptor_dst)
-        ligand_target_dir = demo_assets_dir / "ligands"
-        ligand_target_dir.mkdir(parents=True, exist_ok=True)
-        for lf in ligand_files:
-            shutil.copy2(lf, ligand_target_dir / lf.name)
-        st.success(f"Copied {len(ligand_files)} ligands and receptor to {ligand_target_dir}")
-
-    shutil.copy2(receptor_info["path"], demo_receptor_dst)
-    receptor_path = demo_receptor_dst
-
     if not ligand_labels:
         st.error("No ligands found in `MetalloDock Receptors and Ligands/18 PFAS`. Add the sample PFAS ligands to run the demo.")
         ligand_paths = []
     else:
         st.markdown("**Select ligand(s)**")
-        previous_selection = st.session_state.get("demo_ligand_selection", list(ligand_labels))
+        default_selection = st.session_state.get("demo_ligand_selection", [])
         selected_labels = []
         demo_ligand_dir = demo_assets_dir / "ligands"
         demo_ligand_dir.mkdir(parents=True, exist_ok=True)
         for lig_name in ligand_labels:
             checked = st.checkbox(
                 lig_name,
-                value=lig_name in previous_selection,
+                value=lig_name in default_selection,
                 key=f"demo_ligand_checkbox_{lig_name}"
             )
             if checked:
@@ -1322,20 +1324,11 @@ if page_mode == "demo":
             if name in ligand_lookup:
                 src = ligand_lookup[name]
                 dst = demo_ligand_dir / src.name
-                shutil.copy2(src, dst)
+                if not dst.exists():
+                    shutil.copy2(src, dst)
                 ligand_paths.append(dst)
         if not ligand_paths:
             st.warning("Select at least one ligand to enable docking.")
-        else:
-            missing = [p for p in ligand_paths if not p.exists()]
-            if missing:
-                for missing_path in missing:
-                    src = DEMO_LIGAND_SOURCE_DIR / missing_path.name
-                    if src.exists():
-                        shutil.copy2(src, missing_path)
-                st.warning("One or more demo ligands were missing; they have been restored in the working directory.")
-        if not receptor_path.exists():
-            shutil.copy2(receptor_info["path"], receptor_path)
 else:
     st.subheader("Upload Receptor & Ligands")
     upload_col1, upload_col2 = st.columns(2)

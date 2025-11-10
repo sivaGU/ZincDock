@@ -1285,9 +1285,6 @@ if demo_mode:
     )
     st.session_state["demo_selected_name"] = selected_preset_name
     demo_preset = DEMO_RECEPTOR_SETTINGS[selected_preset_name]
-    receptor_default_path = ""
-else:
-    receptor_default_path = str((work_dir / "receptor.pdbqt").resolve())
 
 st.subheader("Upload Receptor & Ligands")
 upload_col1, upload_col2 = st.columns(2)
@@ -1435,7 +1432,6 @@ build_maps_btn = False
 
 with st.expander("Configuration", expanded=True):
     c1, c2 = st.columns(2)
-    config_disabled = demo_mode
     with c1:
         st.subheader("Executables & Scripts")
         if len(allowed_backends) == 1:
@@ -1446,16 +1442,14 @@ with st.expander("Configuration", expanded=True):
                 "Docking backend",
                 allowed_backends,
                 index=allowed_backends.index(default_backend_label),
-                key=f"{page_mode}_backend",
-                disabled=config_disabled
+                key=f"{page_mode}_backend"
             )
         autodetect = False
         if backend == "Vina (box)":
             autodetect = st.checkbox(
                 "Auto-detect metal center (for Vina run)",
                 value=True,
-                key=f"{page_mode}_autodetect",
-                disabled=config_disabled
+                key=f"{page_mode}_autodetect"
             )
     with c2:
         st.subheader("Grid Box Settings")
@@ -1504,7 +1498,7 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[center_keys["x"]],
                 format="%.3f",
                 key=center_keys["x"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
         with grid_c2:
             center_y = st.number_input(
@@ -1512,7 +1506,7 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[center_keys["y"]],
                 format="%.3f",
                 key=center_keys["y"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
         with grid_c3:
             center_z = st.number_input(
@@ -1520,7 +1514,7 @@ with st.expander("Configuration", expanded=True):
                 value=st.session_state[center_keys["z"]],
                 format="%.3f",
                 key=center_keys["z"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
 
         sz1, sz2, sz3 = st.columns(3)
@@ -1531,7 +1525,7 @@ with st.expander("Configuration", expanded=True):
                 min_value=0.0,
                 step=0.25,
                 key=size_keys["x"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
         with sz2:
             size_y = st.number_input(
@@ -1540,7 +1534,7 @@ with st.expander("Configuration", expanded=True):
                 min_value=0.0,
                 step=0.25,
                 key=size_keys["y"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
         with sz3:
             size_z = st.number_input(
@@ -1549,7 +1543,7 @@ with st.expander("Configuration", expanded=True):
                 min_value=0.0,
                 step=0.25,
                 key=size_keys["z"],
-                disabled=config_disabled
+                disabled=demo_mode
             )
 
         spacing = st.number_input(
@@ -1559,7 +1553,7 @@ with st.expander("Configuration", expanded=True):
             max_value=1.0,
             step=0.01,
             key=spacing_key,
-            disabled=config_disabled
+            disabled=demo_mode
         )
 
         if "AD4 (maps)" in allowed_backends:
@@ -1567,15 +1561,13 @@ with st.expander("Configuration", expanded=True):
                 "AD4 maps prefix (no extension)",
                 value=st.session_state[f"{page_mode}_maps_prefix"],
                 help="Folder will be created if missing (receptor_maps.gpf, *.map, *.fld, etc.).",
-                key=f"{page_mode}_maps_prefix",
-                disabled=config_disabled
+                key=f"{page_mode}_maps_prefix"
             )
             force_extra_types = st.text_input(
                 "Force-include extra ligand atom types when building/patching maps (comma-separated)",
                 value=st.session_state.get(f"{page_mode}_force_types", "S,NA"),
                 help="If you *know* you need maps like S or NA, list them here to guarantee creation.",
-                key=f"{page_mode}_force_types",
-                disabled=config_disabled
+                key=f"{page_mode}_force_types"
             )
             build_maps_btn = st.button(
                 "Build/Update AD4 maps (auto-detect & include missing types)",
@@ -1597,32 +1589,31 @@ is_windows = platform.system() == "Windows"
 
 st.subheader("Docking Parameters")
 p1, p2, p3, p4 = st.columns(4)
-params_disabled = demo_mode
 with p1:
     scoring = "ad4" if backend == "AD4 (maps)" else "vina"
     st.markdown(f"**Scoring function:** `{scoring}`")
 with p2:
-    base_exhaustiveness = st.number_input("Base exhaustiveness", value=64, min_value=1, step=1, disabled=params_disabled)
+    base_exhaustiveness = st.number_input("Base exhaustiveness", value=64, min_value=1, step=1)
 with p3:
-    base_num_modes = st.number_input("Base num_modes", value=10, min_value=1, step=1, disabled=params_disabled)
+    base_num_modes = st.number_input("Base num_modes", value=10, min_value=1, step=1)
 with p4:
-    out_dir_name = st.text_input("Output folder name", value="PFAS_Docking_Results", disabled=params_disabled)
+    out_dir_name = st.text_input("Output folder name", value="PFAS_Docking_Results")
 
 t1, t2, t3, t4 = st.columns(4)
 with t1:
-    timeout_mode = st.selectbox("Timeout mode", ["No timeout (recommended)", "Soft timeout with retries"], index=0, disabled=params_disabled)
+    timeout_mode = st.selectbox("Timeout mode", ["No timeout (recommended)", "Soft timeout with retries"], index=0)
 with t2:
-    timeout_s = st.number_input("Per-ligand timeout (s) if using soft timeout", value=300, min_value=30, step=10, disabled=params_disabled)
+    timeout_s = st.number_input("Per-ligand timeout (s) if using soft timeout", value=300, min_value=30, step=10)
 with t3:
-    max_retries = st.number_input("Max retries on failure", value=2, min_value=0, step=1, disabled=params_disabled)
+    max_retries = st.number_input("Max retries on failure", value=2, min_value=0, step=1)
 with t4:
-    skip_exists = st.checkbox("Skip ligands with existing outputs", value=False, disabled=params_disabled)
+    skip_exists = st.checkbox("Skip ligands with existing outputs", value=False)
 
 b1, b2 = st.columns(2)
 with b1:
-    exhu_backoff = st.number_input("Exhaustiveness multiplier on retry", value=1.5, min_value=1.0, step=0.1, disabled=params_disabled)
+    exhu_backoff = st.number_input("Exhaustiveness multiplier on retry", value=1.5, min_value=1.0, step=0.1)
 with b2:
-    modes_backoff = st.number_input("num_modes multiplier on retry", value=1.25, min_value=1.0, step=0.05, disabled=params_disabled)
+    modes_backoff = st.number_input("num_modes multiplier on retry", value=1.25, min_value=1.0, step=0.05)
 
 # Detect operating system
 exe_ext = ".exe" if is_windows else ""
@@ -1816,10 +1807,15 @@ if build_maps_btn:
             st.warning(f"Force-including extra ligand types: {' '.join(forced)}")
         st.info(f"Final ligand types for maps ({len(lig_types_full)}): {' '.join(lig_types_full)}")
 
+        spacing_val = float(spacing)
+        if spacing_val <= 0.0:
+            st.error("AD4 grid spacing must be greater than 0 Å. Update the Grid Box Settings before building maps.")
+            st.stop()
+
         # 3) Build/patch GPF and run AutoGrid4
-        nx = max(10, int(round(float(size_x) / float(spacing))))
-        ny = max(10, int(round(float(size_y) / float(spacing))))
-        nz = max(10, int(round(float(size_z) / float(spacing))))
+        nx = max(10, int(round(float(size_x) / spacing_val)))
+        ny = max(10, int(round(float(size_y) / spacing_val)))
+        nz = max(10, int(round(float(size_z) / spacing_val)))
         gpf_out = maps_prefix.with_suffix(".gpf")
 
         write_simple_gpf(

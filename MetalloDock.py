@@ -1718,6 +1718,8 @@ with upload_col2:
     if lig_mode == "Upload now":
         ligand_uploads = st.file_uploader("Upload ligand PDBQT files", type=["pdbqt"], accept_multiple_files=True, key="ligand_upload")
 
+build_maps_btn = False
+
 with st.expander("Configuration", expanded=True):
     c1, c2 = st.columns(2)
     with c1:
@@ -1733,18 +1735,9 @@ with st.expander("Configuration", expanded=True):
                 "AD4 + SMINA hybrid: docks with AD4 (zinc maps) then scores poses with SMINA "
                 "to produce the full component breakdown."
             )
-
-        # Auto-detect executables and parameters from Files_for_GUI (no user input needed)
-files_gui_dir = work_dir / "Files_for_GUI"
-is_windows = platform.system() == "Windows"
-autodetect = False
-if backend == "Vina (box)":
-    autodetect = st.checkbox("Auto-detect metal center (for Vina run)", value=True)
-
-smina_exe = _resolve_smina_executable(files_gui_dir, is_windows)
-if backend == "AD4 + SMINA (hybrid)" and smina_exe is None:
-    st.error("SMINA executable not found. Place the binary in `Files_for_GUI/` or `SMINA Linux/` and restart.")
-
+        autodetect = False
+        if backend == "Vina (box)":
+            autodetect = st.checkbox("Auto-detect metal center (for Vina run)", value=True)
     with c2:
         st.subheader("Grid Box Settings")
         grid_c1, grid_c2, grid_c3 = st.columns(3)
@@ -1777,6 +1770,12 @@ if backend == "AD4 + SMINA (hybrid)" and smina_exe is None:
             help="If you *know* you need maps like S or NA, list them here to guarantee creation."
         )
         build_maps_btn = st.button("Build/Update AD4 maps (auto-detect & include missing types)")
+
+files_gui_dir = work_dir / "Files_for_GUI"
+is_windows = platform.system() == "Windows"
+smina_exe = _resolve_smina_executable(files_gui_dir, is_windows)
+if backend == "AD4 + SMINA (hybrid)" and smina_exe is None:
+    st.error("SMINA executable not found. Place the binary in `Files_for_GUI/` or `SMINA Linux/` and restart.")
 
 # ==============================
 # Endogenous Docking Presets (AD4 maps)

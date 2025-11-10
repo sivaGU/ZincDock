@@ -1295,8 +1295,7 @@ if page_mode == "demo":
             shutil.copy2(lf, ligand_target_dir / lf.name)
         st.success(f"Copied {len(ligand_files)} ligands and receptor to {ligand_target_dir}")
 
-    if not demo_receptor_dst.exists():
-        shutil.copy2(receptor_info["path"], demo_receptor_dst)
+    shutil.copy2(receptor_info["path"], demo_receptor_dst)
     receptor_path = demo_receptor_dst
 
     if not ligand_labels:
@@ -1323,8 +1322,7 @@ if page_mode == "demo":
             if name in ligand_lookup:
                 src = ligand_lookup[name]
                 dst = demo_ligand_dir / src.name
-                if not dst.exists():
-                    shutil.copy2(src, dst)
+                shutil.copy2(src, dst)
                 ligand_paths.append(dst)
         if not ligand_paths:
             st.warning("Select at least one ligand to enable docking.")

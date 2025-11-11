@@ -1816,6 +1816,11 @@ if build_maps_btn:
 
                 receptor_copy = maps_dir / receptor_path.name
                 shutil.copy2(receptor_path, receptor_copy)
+                if any(ch in receptor_copy.name for ch in " ()"):
+                    sanitized_name = receptor_copy.name.replace(" ", "_").replace("(", "").replace(")", "")
+                    sanitized_path = receptor_copy.with_name(sanitized_name)
+                    receptor_copy.rename(sanitized_path)
+                    receptor_copy = sanitized_path
                 if normalize_OA:
                     try:
                         normalize_receptor_oxygen_to_OA(receptor_copy, receptor_copy)

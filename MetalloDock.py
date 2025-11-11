@@ -1488,6 +1488,10 @@ else:
     }
     maps_prefix_default = str((work_dir / "ad4_maps" / "receptor_maps").resolve())
 
+saved_prefix = st.session_state.get(f"{state_prefix}_maps_prefix_saved")
+if saved_prefix:
+    st.session_state[f"{state_prefix}_maps_prefix"] = saved_prefix
+
 build_maps_btn = False
 
 with st.expander("Configuration", expanded=True):
@@ -1909,7 +1913,7 @@ if build_maps_btn:
                 f"for atom types: {atom_types}."
             )
             st.caption(f"GPF file: `{map_details['gpf'].name}`")
-            st.session_state[f"{state_prefix}_maps_prefix"] = str(map_details["maps_prefix"])
+            st.session_state[f"{state_prefix}_maps_prefix_saved"] = str(map_details["maps_prefix"])
 
             maps_available = sorted(list_maps_present(map_details["maps_prefix"]))
             if not maps_available:

@@ -11,7 +11,6 @@ import random
 import subprocess
 import platform
 import stat
-import hashlib
 from pathlib import Path
 from typing import List, Tuple, Optional, Set, Dict
 
@@ -22,14 +21,6 @@ import pandas as pd
 import argparse
 import sys
 
-# ---- MetalloDock Theme Palette ----
-RED = "#FF0000"         # pure red
-CRIMSON = "#FF3B30"     # red-orange / crimson
-CORAL_RED = "#FF6F61"   # coral red
-LIGHT_CORAL = "#F08080" # light coral
-MISTY_ROSE = "#FFE4E1"  # very light pink
-WHITE = "#FFFFFF"
-
 # Demo preset defaults
 DEMO_PRESETS = {
     "Carbonic Anhydrase I": {
@@ -38,7 +29,7 @@ DEMO_PRESETS = {
     },
     "Carbonic Anhydrase II": {
         "center": (-6.421, 0.342, 17.256),
-        "size": (10.0, 10.0, 10.0),
+        "size": (20.0, 20.0, 20.0),
     },
 }
 
@@ -200,21 +191,6 @@ def _save_uploaded_file(uploaded_file, dst_dir: Path) -> Path:
 @st.cache_data(show_spinner=False)
 def _cached_file_bytes(b: bytes) -> bytes:
     return b
-
-@st.cache_data(show_spinner=False)
-def _create_ligand_zip(out_path: str, log_path: Optional[str]) -> bytes:
-    """Create ZIP archive for a single ligand's results."""
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        out_file = Path(out_path)
-        if out_file.exists():
-            zf.write(out_file, arcname=out_file.name)
-        if log_path:
-            log_file = Path(log_path)
-            if log_file.exists():
-                zf.write(log_file, arcname=log_file.name)
-    archive.seek(0)
-    return archive.getvalue()
 
 def autodetect_metal_center(receptor_path: Path, metals=("ZN","MG","MN","FE","CU","CO","NI")) -> Optional[Tuple[float,float,float]]:
     try:
@@ -943,7 +919,7 @@ def _endogenous_presets() -> dict:
             "receptor": root / "Receptor Files/Carbonic Anhydrase II/CA_2_pp.pdbqt",
             "lig_dir": root / "18 PFAS",
             "center": (-6.421, 0.342, 17.256),
-            "size": (10.0, 10.0, 10.0),
+            "size": (20.0, 20.0, 20.0),
         },
         "SOD1": {
             "receptor": root / "Receptor Files/SOD1 Receptor + Gridbox/5YTU_Cleaned.pdbqt",
@@ -1300,110 +1276,23 @@ if _files_gui_setup.exists():
 # Streamlit UI
 # ==============================
 
-st.set_page_config(
-    page_title="MetalloDock",
-    layout="wide",
-)
-
-# Inject custom CSS to match red–coral–pink theme
-THEME_CSS = f"""
-<style>
-/* App background: red → coral → light pink gradient */
-.stApp {{
-    background: linear-gradient(135deg, {RED} 0%, {CORAL_RED} 35%, {LIGHT_CORAL} 70%, {MISTY_ROSE} 100%);
-}}
-
-/* Main content container: white card on top of gradient */
-.block-container {{
-    background-color: rgba(255, 255, 255, 0.96);
-    padding: 2rem 2rem 4rem 2rem;
-    border-radius: 18px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}}
-
-/* Sidebar: vertical red → pink gradient */
-[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, {RED} 0%, {CORAL_RED} 40%, {MISTY_ROSE} 100%);
-    color: {WHITE};
-}}
-
-/* Sidebar text/icons stay light */
-[data-testid="stSidebar"] * {{
-    color: {WHITE} !important;
-}}
-
-/* Primary buttons (Run Docking, etc.) */
-.stButton > button, .stDownloadButton > button {{
-    background: {CRIMSON};
-    color: {WHITE};
-    border: none;
-    border-radius: 999px;
-    padding: 0.4rem 1.1rem;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}}
-
-.stButton > button:hover, .stDownloadButton > button:hover {{
-    background: {CORAL_RED};
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}}
-
-/* Radio + checkbox accent color */
-input[type="radio"], input[type="checkbox"] {{
-    accent-color: {CRIMSON};
-}}
-
-/* Progress bar to match palette */
-[data-testid="stProgressBar"] > div > div {{
-    background: linear-gradient(90deg, {RED}, {CORAL_RED}, {LIGHT_CORAL});
-}}
-
-/* Tabs on a soft pink bar */
-.stTabs [data-baseweb="tab-list"] {{
-    background-color: rgba(255, 228, 225, 0.9);
-    border-radius: 999px;
-    padding: 0.25rem;
-}}
-
-.stTabs [data-baseweb="tab"] {{
-    color: {CRIMSON};
-    border-radius: 999px;
-}}
-
-.stTabs [data-baseweb="tab"][aria-selected="true"] {{
-    background-color: {WHITE};
-    color: {RED};
-}}
-
-/* Headers in strong red */
-h1, h2, h3, h4, h5 {{
-    color: {RED};
-}}
-
-/* Metric labels, captions, small text slightly muted red */
-span, p, label {{
-    color: #742525;
-}}
-</style>
-"""
-st.markdown(THEME_CSS, unsafe_allow_html=True)
+st.set_page_config(page_title="MetalloDock", layout="wide")
 
 if "nav_open" not in st.session_state:
     st.session_state.nav_open = True
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "MetalloDock Demo"
+    st.session_state.current_page = "Demo"
 
 nav_pages = [
     "Home",
     "Documentation",
-    "MetalloDock Demo",
+    "Demo",
     "Standard AutoDock",
     "Metalloprotein Docking",
 ]
 
 if st.session_state.current_page not in nav_pages:
-    st.session_state.current_page = "MetalloDock Demo"
+    st.session_state.current_page = "Demo"
 
 with st.sidebar:
     toggle_label = "«" if st.session_state.nav_open else "»"
@@ -1429,12 +1318,12 @@ if page == "Documentation":
     st.stop()
 
 page_mode = {
-    "MetalloDock Demo": "ad4",
+    "Demo": "ad4",
     "Standard AutoDock": "vina",
     "Metalloprotein Docking": "ad4",
 }.get(page, "generic")
 
-state_prefix = "demo" if page == "MetalloDock Demo" else page_mode
+state_prefix = "demo" if page == "Demo" else page_mode
 
 # Session state initialisation for docking workflow
 if "docking_task" not in st.session_state:
@@ -1470,7 +1359,7 @@ _demo_default_size: Optional[Tuple[float, float, float]] = None
 _demo_default_spacing: Optional[float] = None
 demo_selected_label: Optional[str] = None
 
-if page == "MetalloDock Demo":
+if page == "Demo":
     st.subheader("Choose Demo Receptor Preset")
     preset_cols = st.columns(len(DEMO_PRESETS))
     for idx, (label, settings) in enumerate(DEMO_PRESETS.items()):
@@ -1570,7 +1459,7 @@ if page_mode == "vina":
         "spacing": 0.0,
     }
     maps_prefix_default = str((work_dir / "ad4_maps" / "receptor_maps").resolve())
-elif page == "MetalloDock Demo":
+elif page == "Demo":
     allowed_backends = ["AD4 (maps)"]
     default_backend_label = "AD4 (maps)"
     grid_defaults = {
@@ -1644,7 +1533,7 @@ with st.expander("Configuration", expanded=True):
         default_size = grid_defaults["size"]
         default_spacing = grid_defaults["spacing"]
 
-        if page == "MetalloDock Demo":
+        if page == "Demo":
             for idx, axis in enumerate(["x", "y", "z"]):
                 center_key = center_keys[axis]
                 size_key = size_keys[axis]
@@ -1665,7 +1554,7 @@ with st.expander("Configuration", expanded=True):
             if f"{state_prefix}_maps_prefix" not in st.session_state:
                 st.session_state[f"{state_prefix}_maps_prefix"] = maps_prefix_default
 
-        grid_disabled = page == "MetalloDock Demo"
+        grid_disabled = page == "Demo"
 
         grid_c1, grid_c2, grid_c3 = st.columns(3)
         with grid_c1:
@@ -1765,7 +1654,7 @@ is_windows = platform.system() == "Windows"
 
 st.subheader("Docking Parameters")
 p1, p2, p3, p4 = st.columns(4)
-params_disabled = page == "MetalloDock Demo"
+params_disabled = page == "Demo"
 with p1:
     scoring = "ad4" if backend == "AD4 (maps)" else "vina"
     st.markdown(f"**Scoring function:** `{scoring}`")
@@ -2139,18 +2028,17 @@ if rows:
         out_path = row.get("Output_File")
         log_path = row.get("Log_File")
         if out_path and Path(out_path).exists():
-            # Use cached ZIP creation and stable key based on file path
-            zip_data = _create_ligand_zip(out_path, log_path)
-            # Create a stable, unique key based on the output file path hash
-            key_hash = hashlib.md5(str(out_path).encode()).hexdigest()[:8]
-            stable_key = f"dl_zip_{state_prefix}_{key_hash}"
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(out_path, arcname=Path(out_path).name)
+                if log_path and Path(log_path).exists():
+                    zf.write(log_path, arcname=Path(log_path).name)
+            archive.seek(0)
             st.download_button(
                 label=f"Download {ligand_name} results (ZIP)",
-                data=zip_data,
+                data=archive.getvalue(),
                 file_name=f"{Path(out_path).stem}.zip",
-                key=stable_key,
-                mime="application/zip",
-                use_container_width=False
+                key=f"dl_zip_{idx}"
             )
         else:
             st.caption(f"No PDBQT/log available for {ligand_name}")
@@ -2180,34 +2068,19 @@ if rows:
             pass
 
     csv_bytes = _cached_file_bytes(results_to_csv_bytes(rows))
-    # Use a hash of the rows data for stable key generation
-    rows_hash = hashlib.md5(str(sorted([r.get("Ligand", "") for r in rows])).encode()).hexdigest()[:8]
     st.download_button(
         "Download results CSV",
         data=csv_bytes,
         file_name="metallodock_results.csv",
         mime="text/csv",
-        key=f"dl_csv_{state_prefix}_{rows_hash}",
-        use_container_width=False
     )
-    # Get out_dir from the first row if available, or use work_dir
-    result_out_dir = None
-    if rows:
-        first_out_file = rows[0].get("Output_File")
-        if first_out_file:
-            result_out_dir = Path(first_out_file).parent
-    if not result_out_dir and 'out_dir' in locals():
-        result_out_dir = out_dir
-    if result_out_dir and Path(result_out_dir).exists():
-        all_zip = _cached_file_bytes(zip_outputs(Path(result_out_dir)))
-        dir_hash = hashlib.md5(str(result_out_dir).encode()).hexdigest()[:8]
+    if out_dir.exists():
+        all_zip = _cached_file_bytes(zip_outputs(out_dir))
         st.download_button(
             "Download all output PDBQTs (ZIP)",
             data=all_zip,
-            file_name=f"{Path(result_out_dir).name}.zip",
+            file_name=f"{out_dir.name}.zip",
             mime="application/zip",
-            key=f"dl_all_zip_{state_prefix}_{dir_hash}",
-            use_container_width=False
         )
 else:
     st.info("Run docking to see results.")
@@ -2341,6 +2214,3 @@ def build_ad4_maps(
 def build_ad4_maps_for_selection(*args, **kwargs):
     """Backward-compatible wrapper for legacy code paths."""
     return build_ad4_maps(*args, **kwargs)
-
-
-

@@ -21,6 +21,14 @@ import pandas as pd
 import argparse
 import sys
 
+# ---- MetalloDock Theme Palette ----
+RED = "#FF0000"         # pure red
+CRIMSON = "#FF3B30"     # red-orange / crimson
+CORAL_RED = "#FF6F61"   # coral red
+LIGHT_CORAL = "#F08080" # light coral
+MISTY_ROSE = "#FFE4E1"  # very light pink
+WHITE = "#FFFFFF"
+
 # Demo preset defaults
 DEMO_PRESETS = {
     "Carbonic Anhydrase I": {
@@ -1276,7 +1284,94 @@ if _files_gui_setup.exists():
 # Streamlit UI
 # ==============================
 
-st.set_page_config(page_title="MetalloDock", layout="wide")
+st.set_page_config(
+    page_title="MetalloDock",
+    layout="wide",
+)
+
+# Inject custom CSS to match red–coral–pink theme
+THEME_CSS = f"""
+<style>
+/* App background: red → coral → light pink gradient */
+.stApp {{
+    background: linear-gradient(135deg, {RED} 0%, {CORAL_RED} 35%, {LIGHT_CORAL} 70%, {MISTY_ROSE} 100%);
+}}
+
+/* Main content container: white card on top of gradient */
+.block-container {{
+    background-color: rgba(255, 255, 255, 0.96);
+    padding: 2rem 2rem 4rem 2rem;
+    border-radius: 18px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}}
+
+/* Sidebar: vertical red → pink gradient */
+[data-testid="stSidebar"] {{
+    background: linear-gradient(180deg, {RED} 0%, {CORAL_RED} 40%, {MISTY_ROSE} 100%);
+    color: {WHITE};
+}}
+
+/* Sidebar text/icons stay light */
+[data-testid="stSidebar"] * {{
+    color: {WHITE} !important;
+}}
+
+/* Primary buttons (Run Docking, etc.) */
+.stButton > button, .stDownloadButton > button {{
+    background: {CRIMSON};
+    color: {WHITE};
+    border: none;
+    border-radius: 999px;
+    padding: 0.4rem 1.1rem;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}}
+
+.stButton > button:hover, .stDownloadButton > button:hover {{
+    background: {CORAL_RED};
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}}
+
+/* Radio + checkbox accent color */
+input[type="radio"], input[type="checkbox"] {{
+    accent-color: {CRIMSON};
+}}
+
+/* Progress bar to match palette */
+[data-testid="stProgressBar"] > div > div {{
+    background: linear-gradient(90deg, {RED}, {CORAL_RED}, {LIGHT_CORAL});
+}}
+
+/* Tabs on a soft pink bar */
+.stTabs [data-baseweb="tab-list"] {{
+    background-color: rgba(255, 228, 225, 0.9);
+    border-radius: 999px;
+    padding: 0.25rem;
+}}
+
+.stTabs [data-baseweb="tab"] {{
+    color: {CRIMSON};
+    border-radius: 999px;
+}}
+
+.stTabs [data-baseweb="tab"][aria-selected="true"] {{
+    background-color: {WHITE};
+    color: {RED};
+}}
+
+/* Headers in strong red */
+h1, h2, h3, h4, h5 {{
+    color: {RED};
+}}
+
+/* Metric labels, captions, small text slightly muted red */
+span, p, label {{
+    color: #742525;
+}}
+</style>
+"""
+st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 if "nav_open" not in st.session_state:
     st.session_state.nav_open = True
@@ -2214,3 +2309,4 @@ def build_ad4_maps(
 def build_ad4_maps_for_selection(*args, **kwargs):
     """Backward-compatible wrapper for legacy code paths."""
     return build_ad4_maps(*args, **kwargs)
+

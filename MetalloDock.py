@@ -39,7 +39,7 @@ DEMO_PRESETS = {
     },
     "Carbonic Anhydrase II": {
         "center": (-6.421, 0.342, 17.256),
-        "size": (22.0, 22.0, 22.0),
+        "size": (21.0, 21.0, 21.0),
     },
 }
 
@@ -929,7 +929,7 @@ def _endogenous_presets() -> dict:
             "receptor": root / "Receptor Files/Carbonic Anhydrase II/CA_2_pp.pdbqt",
             "lig_dir": root / "18 PFAS",
             "center": (-6.421, 0.342, 17.256),
-            "size": (22.0, 22.0, 22.0),
+            "size": (21.0, 21.0, 21.0),
         },
         "SOD1": {
             "receptor": root / "Receptor Files/SOD1 Receptor + Gridbox/5YTU_Cleaned.pdbqt",
@@ -2315,6 +2315,7 @@ def build_ad4_maps(
 def build_ad4_maps_for_selection(*args, **kwargs):
     """Backward-compatible wrapper for legacy code paths."""
     return build_ad4_maps(*args, **kwargs)
+
 
 
 

@@ -5,6 +5,7 @@ import os
 import io
 import csv
 import math
+import re
 import shutil
 import zipfile
 import random
@@ -788,6 +789,251 @@ def run_vina_batch(
                 else:
                     progress_cb(i, len(ligand_files), lig_name, "FAILED")
 
+    return rows
+
+# ==============================
+# GNINA Docking Functions
+# ==============================
+
+def find_smina_executable() -> Optional[Path]:
+    """Find SMINA executable in PATH or conda environment."""
+    # Check PATH
+    exe = shutil.which("smina")
+    if exe:
+        return Path(exe)
+    
+    # Check conda environment
+    conda_env = os.environ.get("CONDA_DEFAULT_ENV", "equibind_cpu")
+    try:
+        result = subprocess.run(
+            ["conda", "run", "-n", conda_env, "which", "smina"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip())
+    except:
+        pass
+    
+    # Check common conda locations
+    conda_base = os.environ.get("CONDA_PREFIX", "")
+    if conda_base:
+        is_windows_platform = platform.system() == "Windows"
+        smina_path = Path(conda_base) / "Library" / "bin" / "smina.exe" if is_windows_platform else Path(conda_base) / "bin" / "smina"
+        if smina_path.exists():
+            return smina_path
+    
+    return None
+
+
+def parse_gnina_affinities(stdout: str, num_modes: int = 10) -> List[float]:
+    """Parse binding affinities from GNINA/SMINA stdout output."""
+    import re
+    affinities = []
+    
+    # Try parsing from stdout - SMINA outputs a table like:
+    # mode |   affinity | dist from best mode
+    #      | (kcal/mol) | rmsd l.b.| rmsd u.b.
+    # -----+------------+----------+----------
+    # 1       -7.2       0.000      0.000
+    for line in stdout.split('\n'):
+        # Look for lines that start with a number (mode number) followed by affinity
+        match = re.match(r'^\s*(\d+)\s+(-?\d+\.?\d*)', line)
+        if match:
+            try:
+                affinity = float(match.group(2))
+                affinities.append(affinity)
+            except ValueError:
+                pass
+    
+    # Remove duplicates and sort (best affinity first, most negative)
+    affinities = sorted(set(affinities))[:num_modes]
+    return affinities
+
+
+def run_gnina_one(
+    smina_exec: Path,
+    receptor_file: Path,
+    ligand_file: Path,
+    out_pdbqt: Path,
+    log_file: Path,
+    center: Tuple[float, float, float],
+    size: Tuple[float, float, float],
+    exhaustiveness: int,
+    num_modes: int,
+    seed: Optional[int],
+    timeout_s: Optional[int],
+    cnn_scoring: str = "none",  # "none", "rescore", "refinement", "all"
+) -> Tuple[bool, str, int]:
+    """Run GNINA (via SMINA) for a single ligand. Returns (ok, affinity, nposes)."""
+    import re
+    
+    out_pdbqt.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Build SMINA command
+    cmd = [
+        str(smina_exec),
+        "-r", str(receptor_file),
+        "-l", str(ligand_file),  # SMINA supports SDF, MOL2, PDBQT directly
+        "--center_x", str(center[0]),
+        "--center_y", str(center[1]),
+        "--center_z", str(center[2]),
+        "--size_x", str(size[0]),
+        "--size_y", str(size[1]),
+        "--size_z", str(size[2]),
+        "--num_modes", str(num_modes),
+        "--exhaustiveness", str(exhaustiveness),
+        "-o", str(out_pdbqt)
+    ]
+    
+    if seed is not None:
+        cmd.extend(["--seed", str(seed)])
+    
+    # CNN scoring options (if GNINA is available, otherwise SMINA will ignore)
+    if cnn_scoring != "none":
+        if cnn_scoring == "rescore":
+            cmd.append("--cnn")
+        elif cnn_scoring == "refinement":
+            cmd.extend(["--cnn_scoring", "refinement"])
+        elif cnn_scoring == "all":
+            cmd.extend(["--cnn_scoring", "all"])
+    
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=None if (timeout_s is None or timeout_s == 0) else int(timeout_s)
+        )
+        
+        with open(log_file, "w", encoding="utf-8") as lf:
+            lf.write(f"Command: {' '.join(cmd)}\n")
+            lf.write(f"Return code: {proc.returncode}\n")
+            lf.write("\n---- STDOUT ----\n")
+            if proc.stdout: lf.write(proc.stdout)
+            lf.write("\n---- STDERR ----\n")
+            if proc.stderr: lf.write(proc.stderr)
+        
+        if proc.returncode != 0:
+            return (False, "", 0)
+        
+        if not out_pdbqt.exists() or out_pdbqt.stat().st_size == 0:
+            return (False, "", 0)
+        
+        # Parse binding affinity from output
+        affinities = parse_gnina_affinities(proc.stdout or "", num_modes)
+        
+        # Also try parsing from PDBQT file
+        if out_pdbqt.exists() and not affinities:
+            with open(out_pdbqt, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                for line in content.split('\n'):
+                    if 'REMARK' in line and 'Affinity' in line:
+                        matches = re.findall(r'[-]?\d+\.?\d*', line)
+                        for match in matches:
+                            try:
+                                val = float(match)
+                                if val < 0:
+                                    affinities.append(val)
+                            except ValueError:
+                                pass
+        
+        aff = affinities[0] if affinities else ""
+        aff_str = f"{aff:.4f}" if aff != "" else ""
+        nposes = count_poses(out_pdbqt) if out_pdbqt.exists() else len(affinities)
+        
+        return (True, aff_str, nposes)
+        
+    except subprocess.TimeoutExpired as e:
+        with open(log_file, "a", encoding="utf-8") as lf:
+            lf.write("\n---- TIMEOUT ----\n")
+            lf.write(str(e))
+        return (False, "", 0)
+    except Exception as e:
+        with open(log_file, "a", encoding="utf-8") as lf:
+            lf.write("\n---- EXCEPTION ----\n")
+            lf.write(str(e))
+        return (False, "", 0)
+
+
+def run_gnina_batch(
+    smina_exec: Path,
+    receptor_file: Path,
+    ligand_files: List[Path],
+    out_dir: Path,
+    center: Tuple[float, float, float],
+    size: Tuple[float, float, float],
+    base_exhaustiveness: int,
+    base_num_modes: int,
+    timeout_mode: str,  # "no_timeout" or "soft_timeout"
+    timeout_s: int,
+    max_retries: int,
+    exhu_backoff: float,
+    modes_backoff: float,
+    progress_cb=None,
+    skip_if_output_exists: bool = False,
+    cnn_scoring: str = "none",
+) -> List[dict]:
+    """Run GNINA (via SMINA) docking for multiple ligands."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    
+    for i, lig in enumerate(ligand_files, start=1):
+        lig_name = lig.stem.replace("_prepared_no_h", "").replace("_prepared", "")
+        out_pdbqt = out_dir / f"{lig_name}_gnina_out.pdbqt"
+        log_file = out_dir / f"{lig_name}.log"
+        
+        if skip_if_output_exists and out_pdbqt.exists() and out_pdbqt.stat().st_size > 0:
+            aff = parse_binding_affinity(out_pdbqt) if out_pdbqt.exists() else ""
+            nposes = count_poses(out_pdbqt) if out_pdbqt.exists() else 0
+            rows.append({
+                "Ligand": lig_name, "Binding_Affinity": aff, "Num_Poses": nposes,
+                "Output_File": str(out_pdbqt), "Log_File": str(log_file), "Status": "Skipped (exists)"
+            })
+            if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Skipped (existing) | Score {aff}")
+            continue
+        
+        tried = 0
+        ok, aff, nposes = False, "", 0
+        ex = base_exhaustiveness
+        nm = base_num_modes
+        per_try_timeout = None if timeout_mode == "no_timeout" else int(timeout_s)
+        
+        while tried <= max_retries and not ok:
+            seed = random.randint(1, 2**31-1)
+            if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Running (try {tried+1}/{max_retries+1})")
+            ok, aff, nposes = run_gnina_one(
+                smina_exec, receptor_file, lig, out_pdbqt, log_file,
+                center, size, ex, nm, seed, per_try_timeout, cnn_scoring
+            )
+            
+            if ok:
+                if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Success | Score {aff} ({nposes} poses)")
+                break
+            
+            tried += 1
+            ex = max(ex, int(math.ceil(ex * exhu_backoff)))
+            nm = max(nm, int(math.ceil(nm * modes_backoff)))
+        
+        status = "Success" if ok else ("Failed - Timeout" if timeout_mode != "no_timeout" else "Failed")
+        rows.append({
+            "Ligand": lig_name,
+            "Binding_Affinity": aff if ok else "",
+            "Num_Poses": nposes if ok else 0,
+            "Output_File": str(out_pdbqt if ok else ""),
+            "Log_File": str(log_file),
+            "Status": status,
+        })
+        
+        if progress_cb:
+            if ok:
+                progress_cb(i, len(ligand_files), lig_name, f"Done | Score {aff}")
+            else:
+                progress_cb(i, len(ligand_files), lig_name, "FAILED")
+    
     return rows
 
 # ==============================
@@ -2107,12 +2353,8 @@ zinc_pseudo_py = (files_gui_dir / "zinc_pseudo.py").resolve() if (files_gui_dir 
 base_params = (files_gui_dir / "AD4_parameters.dat").resolve() if (files_gui_dir / "AD4_parameters.dat").exists() else None
 extra_params = (files_gui_dir / "AD4Zn.dat").resolve() if (files_gui_dir / "AD4Zn.dat").exists() else None
 
-# SMINA/GNINA executable detection for GNINA ML Docking page
+# SMINA/GNINA executable detection for GNINA ML Docking page (will be set when needed)
 smina_exe = None
-if page_mode == "gnina":
-    smina_exe = find_smina_executable()
-    if smina_exe:
-        smina_exe = Path(smina_exe)
 
 # CNN scoring option for GNINA (will be defined in Docking Parameters section)
 
@@ -2289,7 +2531,12 @@ ad4_rows: List[dict] = []
 if run_btn:
     # Check executable based on page mode
     if page_mode == "gnina":
-        if smina_exe is None or not smina_exe.exists():
+        # Detect SMINA executable when actually needed
+        if smina_exe is None:
+            smina_exe = find_smina_executable()
+            if smina_exe:
+                smina_exe = Path(smina_exe)
+        if smina_exe is None or (isinstance(smina_exe, Path) and not smina_exe.exists()):
             st.error("SMINA/GNINA executable not found. Please ensure SMINA is installed and available in your PATH or conda environment.")
             st.stop()
     else:
@@ -2585,250 +2832,4 @@ def build_ad4_maps(
 def build_ad4_maps_for_selection(*args, **kwargs):
     """Backward-compatible wrapper for legacy code paths."""
     return build_ad4_maps(*args, **kwargs)
-
-
-# ==============================
-# GNINA Docking Functions
-# ==============================
-
-def find_smina_executable() -> Optional[Path]:
-    """Find SMINA executable in PATH or conda environment."""
-    # Check PATH
-    exe = shutil.which("smina")
-    if exe:
-        return Path(exe)
-    
-    # Check conda environment
-    conda_env = os.environ.get("CONDA_DEFAULT_ENV", "equibind_cpu")
-    try:
-        result = subprocess.run(
-            ["conda", "run", "-n", conda_env, "which", "smina"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return Path(result.stdout.strip())
-    except:
-        pass
-    
-    # Check common conda locations
-    conda_base = os.environ.get("CONDA_PREFIX", "")
-    if conda_base:
-        is_windows_platform = platform.system() == "Windows"
-        smina_path = Path(conda_base) / "Library" / "bin" / "smina.exe" if is_windows_platform else Path(conda_base) / "bin" / "smina"
-        if smina_path.exists():
-            return smina_path
-    
-    return None
-
-
-def parse_gnina_affinities(stdout: str, num_modes: int = 10) -> List[float]:
-    """Parse binding affinities from GNINA/SMINA stdout output."""
-    import re
-    affinities = []
-    
-    # Try parsing from stdout - SMINA outputs a table like:
-    # mode |   affinity | dist from best mode
-    #      | (kcal/mol) | rmsd l.b.| rmsd u.b.
-    # -----+------------+----------+----------
-    # 1       -7.2       0.000      0.000
-    for line in stdout.split('\n'):
-        # Look for lines that start with a number (mode number) followed by affinity
-        match = re.match(r'^\s*(\d+)\s+(-?\d+\.?\d*)', line)
-        if match:
-            try:
-                affinity = float(match.group(2))
-                affinities.append(affinity)
-            except ValueError:
-                pass
-    
-    # Remove duplicates and sort (best affinity first, most negative)
-    affinities = sorted(set(affinities))[:num_modes]
-    return affinities
-
-
-def run_gnina_one(
-    smina_exec: Path,
-    receptor_file: Path,
-    ligand_file: Path,
-    out_pdbqt: Path,
-    log_file: Path,
-    center: Tuple[float, float, float],
-    size: Tuple[float, float, float],
-    exhaustiveness: int,
-    num_modes: int,
-    seed: Optional[int],
-    timeout_s: Optional[int],
-    cnn_scoring: str = "none",  # "none", "rescore", "refinement", "all"
-) -> Tuple[bool, str, int]:
-    """Run GNINA (via SMINA) for a single ligand. Returns (ok, affinity, nposes)."""
-    import re
-    
-    out_pdbqt.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Build SMINA command
-    cmd = [
-        str(smina_exec),
-        "-r", str(receptor_file),
-        "-l", str(ligand_file),  # SMINA supports SDF, MOL2, PDBQT directly
-        "--center_x", str(center[0]),
-        "--center_y", str(center[1]),
-        "--center_z", str(center[2]),
-        "--size_x", str(size[0]),
-        "--size_y", str(size[1]),
-        "--size_z", str(size[2]),
-        "--num_modes", str(num_modes),
-        "--exhaustiveness", str(exhaustiveness),
-        "-o", str(out_pdbqt)
-    ]
-    
-    if seed is not None:
-        cmd.extend(["--seed", str(seed)])
-    
-    # CNN scoring options (if GNINA is available, otherwise SMINA will ignore)
-    if cnn_scoring != "none":
-        if cnn_scoring == "rescore":
-            cmd.append("--cnn")
-        elif cnn_scoring == "refinement":
-            cmd.extend(["--cnn_scoring", "refinement"])
-        elif cnn_scoring == "all":
-            cmd.extend(["--cnn_scoring", "all"])
-    
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=None if (timeout_s is None or timeout_s == 0) else int(timeout_s)
-        )
-        
-        with open(log_file, "w", encoding="utf-8") as lf:
-            lf.write(f"Command: {' '.join(cmd)}\n")
-            lf.write(f"Return code: {proc.returncode}\n")
-            lf.write("\n---- STDOUT ----\n")
-            if proc.stdout: lf.write(proc.stdout)
-            lf.write("\n---- STDERR ----\n")
-            if proc.stderr: lf.write(proc.stderr)
-        
-        if proc.returncode != 0:
-            return (False, "", 0)
-        
-        if not out_pdbqt.exists() or out_pdbqt.stat().st_size == 0:
-            return (False, "", 0)
-        
-        # Parse binding affinity from output
-        affinities = parse_gnina_affinities(proc.stdout or "", num_modes)
-        
-        # Also try parsing from PDBQT file
-        if out_pdbqt.exists() and not affinities:
-            with open(out_pdbqt, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-                for line in content.split('\n'):
-                    if 'REMARK' in line and 'Affinity' in line:
-                        matches = re.findall(r'[-]?\d+\.?\d*', line)
-                        for match in matches:
-                            try:
-                                val = float(match)
-                                if val < 0:
-                                    affinities.append(val)
-                            except ValueError:
-                                pass
-        
-        aff = affinities[0] if affinities else ""
-        aff_str = f"{aff:.4f}" if aff != "" else ""
-        nposes = count_poses(out_pdbqt) if out_pdbqt.exists() else len(affinities)
-        
-        return (True, aff_str, nposes)
-        
-    except subprocess.TimeoutExpired as e:
-        with open(log_file, "a", encoding="utf-8") as lf:
-            lf.write("\n---- TIMEOUT ----\n")
-            lf.write(str(e))
-        return (False, "", 0)
-    except Exception as e:
-        with open(log_file, "a", encoding="utf-8") as lf:
-            lf.write("\n---- EXCEPTION ----\n")
-            lf.write(str(e))
-        return (False, "", 0)
-
-
-def run_gnina_batch(
-    smina_exec: Path,
-    receptor_file: Path,
-    ligand_files: List[Path],
-    out_dir: Path,
-    center: Tuple[float, float, float],
-    size: Tuple[float, float, float],
-    base_exhaustiveness: int,
-    base_num_modes: int,
-    timeout_mode: str,  # "no_timeout" or "soft_timeout"
-    timeout_s: int,
-    max_retries: int,
-    exhu_backoff: float,
-    modes_backoff: float,
-    progress_cb=None,
-    skip_if_output_exists: bool = False,
-    cnn_scoring: str = "none",
-) -> List[dict]:
-    """Run GNINA (via SMINA) docking for multiple ligands."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows = []
-    
-    for i, lig in enumerate(ligand_files, start=1):
-        lig_name = lig.stem.replace("_prepared_no_h", "").replace("_prepared", "")
-        out_pdbqt = out_dir / f"{lig_name}_gnina_out.pdbqt"
-        log_file = out_dir / f"{lig_name}.log"
-        
-        if skip_if_output_exists and out_pdbqt.exists() and out_pdbqt.stat().st_size > 0:
-            aff = parse_binding_affinity(out_pdbqt) if out_pdbqt.exists() else ""
-            nposes = count_poses(out_pdbqt) if out_pdbqt.exists() else 0
-            rows.append({
-                "Ligand": lig_name, "Binding_Affinity": aff, "Num_Poses": nposes,
-                "Output_File": str(out_pdbqt), "Log_File": str(log_file), "Status": "Skipped (exists)"
-            })
-            if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Skipped (existing) | Score {aff}")
-            continue
-        
-        tried = 0
-        ok, aff, nposes = False, "", 0
-        ex = base_exhaustiveness
-        nm = base_num_modes
-        per_try_timeout = None if timeout_mode == "no_timeout" else int(timeout_s)
-        
-        while tried <= max_retries and not ok:
-            seed = random.randint(1, 2**31-1)
-            if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Running (try {tried+1}/{max_retries+1})")
-            ok, aff, nposes = run_gnina_one(
-                smina_exec, receptor_file, lig, out_pdbqt, log_file,
-                center, size, ex, nm, seed, per_try_timeout, cnn_scoring
-            )
-            
-            if ok:
-                if progress_cb: progress_cb(i, len(ligand_files), lig_name, f"Success | Score {aff} ({nposes} poses)")
-                break
-            
-            tried += 1
-            ex = max(ex, int(math.ceil(ex * exhu_backoff)))
-            nm = max(nm, int(math.ceil(nm * modes_backoff)))
-        
-        status = "Success" if ok else ("Failed - Timeout" if timeout_mode != "no_timeout" else "Failed")
-        rows.append({
-            "Ligand": lig_name,
-            "Binding_Affinity": aff if ok else "",
-            "Num_Poses": nposes if ok else 0,
-            "Output_File": str(out_pdbqt if ok else ""),
-            "Log_File": str(log_file),
-            "Status": status,
-        })
-        
-        if progress_cb:
-            if ok:
-                progress_cb(i, len(ligand_files), lig_name, f"Done | Score {aff}")
-            else:
-                progress_cb(i, len(ligand_files), lig_name, "FAILED")
-    
-    return rows
 

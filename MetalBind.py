@@ -40,22 +40,46 @@ RICH_TEAL_BLUE = "#004566"        # Darker Rich Teal Blue
 MIDNIGHT_AZURE = "#003A5F"        # Darker Midnight Azure
 WHITE = "#FFFFFF"
 
-# Demo preset defaults
+# Demo preset defaults - 8 Zinc Metal Proteins
 DEMO_PRESETS = {
-    "Carbonic Anhydrase I": {
-        "center": (29.951, 0.420, -4.735),
-        "size": (16.0, 18.0, 16.0),
+    "hACE": {
+        "center": (46.712, 1.0, 25.11),
+        "size": (24.0, 24.0, 24.0),
     },
-    "Carbonic Anhydrase II": {
-        "center": (-6.421, 0.342, 17.256),
-        "size": (21.0, 21.0, 21.0),
+    "HDAC2": {
+        "center": (-42.889, 1.0, 13.34),
+        "size": (22.0, 22.0, 22.0),
+    },
+    "HDAC8 with Hydroxamic Acid": {
+        "center": (122.038, 1.0, 19.8),
+        "size": (24.0, 24.0, 24.0),
+    },
+    "HDAC8 with SAHA": {
+        "center": (49.876, 18.975, -43.828),
+        "size": (24.0, 24.0, 24.0),
+    },
+    "HDAC10": {
+        "center": (32.264, 1.0, 42.62),
+        "size": (24.0, 24.0, 24.0),
+    },
+    "Human Neutral Endopeptidase": {
+        "center": (34.610, 1.423, 1.630),
+        "size": (24.0, 24.0, 24.0),
+    },
+    "Leukotriene": {
+        "center": (34.610, 1.423, 1.630),
+        "size": (24.0, 24.0, 24.0),
+    },
+    "ADAMTS-5": {
+        "center": (-4.219, 1.0, 13.85),
+        "size": (24.0, 24.0, 24.0),
     },
 }
 
 DEMO_PARAM_DEFAULTS = {
     "base_exhaustiveness": 64,
     "base_num_modes": 10,
-    "output_name": "PFAS_Docking_Results",
+    "output_name": "Zinc_Metal_Protein_Docking_Results",
     "timeout_mode": "No timeout (recommended)",
     "timeout_s": 300,
     "max_retries": 2,
@@ -126,13 +150,19 @@ def render_gnina_documentation_page():
     st.markdown(
         "**Receptors:**\n"
         "• **Format**: PDB or PDBQT files\n"
-        "• **Provided CA Receptors**: You can use the pre-configured Carbonic Anhydrase receptors:\n"
-        "  - `(DEMO) Carbonic Anhydrase Receptors/Carbonic_Anhydrase_I.pdbqt`\n"
-        "  - `(DEMO) Carbonic Anhydrase Receptors/Carbonic_Anhydrase_II.pdbqt`\n"
+        "• **Provided Zinc Metal Protein Receptors**: You can use the pre-configured Zinc Metal Protein receptors:\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/hACE.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/HDAC2.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/HDAC8_with_Hydroxamic_Acid.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/HDAC8_with_SAHA.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/HDAC10.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/Human_Neutral_Endopeptidase.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/Leukotriene.pdbqt`\n"
+        "  - `(DEMO) Zinc Metal Protein Receptors/ADAMTS-5.pdbqt`\n"
         "• **Your Own Receptors**: Upload any PDB or PDBQT receptor file\n\n"
         "**Ligands:**\n"
         "• **Formats**: MOL2, SDF, PDBQT, or PDB files\n"
-        "• **Provided Ligands**: You can use the 18 PFAS ligands from `(DEMO) Ligands/` folder\n"
+        "• **Provided Ligands**: You can use the 8 endogenous ligands from `(DEMO) Ligands/` folder\n"
         "• **Your Own Ligands**: Upload any ligand files in supported formats\n"
         "• **Batch Processing**: Upload multiple ligands at once for batch docking"
     )
@@ -221,8 +251,8 @@ def render_gnina_documentation_page():
 
     st.subheader("Tips & Best Practices")
     st.markdown(
-        "**For Carbonic Anhydrase Docking**:\n"
-        "• Use the provided CA receptors for consistency\n"
+        "**For Zinc Metal Protein Docking**:\n"
+        "• Use the provided zinc metal protein receptors for consistency\n"
         "• Grid center should be near the zinc binding site\n"
         "• Typical grid size: 20-25 Å\n\n"
         "**For General Metalloprotein Docking**:\n"
@@ -274,7 +304,7 @@ def render_documentation_page():
     )
     st.markdown(
         "**2. Review the navigation tabs.**\\n"
-        "- *Demo*: AD4 workflow with carbonic anhydrase presets.\\n"
+        "- *Demo*: AD4 workflow with zinc metal protein presets.\\n"
         "- *Standard AutoDock*: Vina box docking.\\n"
         "- *Metalloprotein Docking*: Manual AD4 configuration."
     )
@@ -343,8 +373,8 @@ def render_documentation_page():
 
     st.subheader("Demo Tab Notes")
     st.markdown(
-        "The Demo tab is pre-populated for carbonic anhydrase receptors. Download the bundled folders (`Carbonic Anhydrase Receptor Files` and "
-        "`18 PFAS Ligands`) from the repository so the tab can locate receptors and sample ligands. Switching between *Carbonic Anhydrase I* and "
+        "The Demo tab is pre-populated for zinc metal protein receptors. Download the bundled folders (`Zinc Metal Protein Receptors` and "
+        "`8 Endogenous Ligands`) from the repository so the tab can locate receptors and sample ligands. Switching between the 8 zinc metal proteins "
         "*II* locks grid centers, box sizes, spacing (0.375 Å), and docking parameters accordingly."
     )
 
@@ -2230,13 +2260,13 @@ if "docking_status_message" not in st.session_state:
 
 st.title(page)
 
-# GNINA-specific info about using provided CA receptors/ligands or own files
+# GNINA-specific info about using provided zinc metal protein receptors/ligands or own files
 if page_mode == "gnina":
     st.info(
         "**📁 Using Provided Files or Your Own:**\n\n"
-        "• **Provided Carbonic Anhydrase Receptors**: You can use the pre-configured CA receptors from the "
-        "`(DEMO) Carbonic Anhydrase Receptors` folder (Carbonic_Anhydrase_I.pdbqt, Carbonic_Anhydrase_II.pdbqt).\n\n"
-        "• **Provided Ligands**: You can use the sample ligands from the `(DEMO) Ligands` folder (18 PFAS ligands).\n\n"
+        "• **Provided Zinc Metal Protein Receptors**: You can use the pre-configured zinc metal protein receptors from the "
+        "`(DEMO) Zinc Metal Protein Receptors` folder (hACE.pdbqt, HDAC2.pdbqt, HDAC8_with_Hydroxamic_Acid.pdbqt, HDAC8_with_SAHA.pdbqt, HDAC10.pdbqt, Human_Neutral_Endopeptidase.pdbqt, Leukotriene.pdbqt, ADAMTS-5.pdbqt).\n\n"
+        "• **Provided Ligands**: You can use the sample ligands from the `(DEMO) Ligands` folder (8 endogenous ligands).\n\n"
         "• **Your Own Files**: You can also upload your own receptor (PDB/PDBQT) and ligand files (MOL2/SDF/PDBQT/PDB).\n\n"
         "Simply upload the files you want to use in the sections below, or navigate to the **GNINA Documentation** tab "
         "for detailed instructions."

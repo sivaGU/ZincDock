@@ -76,18 +76,18 @@ MetalBind-main/
 - Dedicated documentation tab mirroring the personalized vaccine pipeline
 
 ## Demo Tab Assets
-The *Demo* tab is preconfigured for Carbonic Anhydrase I & II receptors. To use it:
-1. **Download the demo assets** from the `Carbonic Anhydrase Receptor Files` and `18 PFAS Ligands` folders in the repository.
+The *Demo* tab is preconfigured for 8 Zinc Metal Proteins. To use it:
+1. **Download the demo assets** from the `Zinc Metal Protein Receptors` and `8 Endogenous Ligands` folders in the repository.
 2. Place these folders alongside `MetalBind.py` (locally) or upload their contents to the Streamlit Cloud workspace under the same folder names.
-3. In the app, choose either "Carbonic Anhydrase I" or "Carbonic Anhydrase II". Grid centers, sizes, spacing (0.375 Å), and docking parameters lock automatically.
-4. Upload one of the bundled receptors (PDBQT) and select ligands from the PFAS set before running AD4 map building or docking.
+3. In the app, choose from the 8 zinc metal proteins: hACE, HDAC2, HDAC8 with Hydroxamic Acid, HDAC8 with SAHA, HDAC10, Human Neutral Endopeptidase, Leukotriene, or ADAMTS-5. Grid centers, sizes, spacing (0.375 Å), and docking parameters lock automatically.
+4. Upload one of the bundled receptors (PDBQT) and select ligands from the endogenous ligand set before running AD4 map building or docking.
 
 Without these folders, the Demo tab cannot find receptors/ligands and will show missing-file warnings.
 
 ## Tab-by-Tab Summary
 - **Home**: High-level overview and quick tips.
 - **Documentation**: Full step-by-step instructions (see above) covering CSV ingestion, module selection, epitope features, VaxiJen workflow, aggregated file processing, and population coverage.
-- **Demo**: AD4-only workflow with one-click presets for Carbonic Anhydrase I/II. Requires the demo receptor/ligand folders.
+- **Demo**: AD4-only workflow with one-click presets for 8 Zinc Metal Proteins. Requires the demo receptor/ligand folders.
 - **Standard AutoDock**: Vina-focused workflow with user-defined grid boxes.
 - **Metalloprotein Docking**: AD4 workflow with full control over grid/map settings.
 

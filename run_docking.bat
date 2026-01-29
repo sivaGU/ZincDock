@@ -1,5 +1,5 @@
 @echo off
-echo MetalBind - Quick Start
+echo MBind - Quick Start
 echo ========================
 
 REM Check if Python is available
@@ -51,17 +51,17 @@ if not exist "Files_for_GUI\Ligands" (
 )
 
 if not exist "MetalBind.py" (
-    echo Error: MetalBind.py not found in current directory
-    echo Please ensure you are running this from the Final Code folder
+    echo Error: MBind main script ^(MetalBind.py^) not found in current directory
+    echo Please ensure you are running this from the project folder
     pause
     exit /b 1
 )
 
-echo Starting MetalBind GUI...
+echo Starting MBind GUI...
 echo.
 
 REM Run the original GUI
-echo Running: streamlit run MetalBind.py
+echo Running MBind: streamlit run MetalBind.py
 echo Opening browser at http://localhost:8501
 echo.
 streamlit run MetalBind.py

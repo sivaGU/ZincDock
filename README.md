@@ -28,7 +28,7 @@ Hosted app: https://metalbind-gpzx2nqfh94crqcoo9lraa.streamlit.app/
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd MBind-main
+   cd MetalBind-main
    ```
 2. **Install dependencies**
    ```bash
@@ -36,7 +36,7 @@ Hosted app: https://metalbind-gpzx2nqfh94crqcoo9lraa.streamlit.app/
    ```
 3. **Launch the app**
    ```bash
-   streamlit run MBind.py
+   streamlit run MetalBind.py
    ```
    *Windows:* double-click `run_docking.bat` to launch Streamlit.
 4. Visit `http://localhost:8501` in your browser.
@@ -49,12 +49,12 @@ Hosted app: https://metalbind-gpzx2nqfh94crqcoo9lraa.streamlit.app/
   - `autogrid4.exe`
   - `autodock4.exe`
 
-*Linux/Mac:* compile or install equivalent binaries (without `.exe` extensions) and update paths in `MBind.py` or drop them inside `Files_for_GUI/`.
+*Linux/Mac:* compile or install equivalent binaries (without `.exe` extensions) and update paths in `MetalBind.py` or drop them inside `Files_for_GUI/`.
 
 ## Project Structure
 ```
-MBind-main/
-├── MBind.py          # Main Streamlit application
+MetalBind-main/
+├── MetalBind.py          # Main MBind Streamlit application
 ├── Files_for_GUI/          # Executables, parameters, sample ligands
 │   ├── vina.exe
 │   ├── autogrid4.exe
@@ -78,7 +78,7 @@ MBind-main/
 ## Demo Tab Assets
 The *Demo* tab is preconfigured for 8 Zinc Metal Proteins. To use it:
 1. **Download the demo assets** from the `Zinc Metal Protein Receptors` and `8 Endogenous Ligands` folders in the repository.
-2. Place these folders alongside `MBind.py` (locally) or upload their contents to the Streamlit Cloud workspace under the same folder names.
+2. Place these folders alongside `MetalBind.py` (locally) or upload their contents to the Streamlit Cloud workspace under the same folder names.
 3. In the app, choose from the 8 zinc metal proteins: hACE, HDAC2, HDAC8 with Hydroxamic Acid, HDAC8 with SAHA, HDAC10, Human Neutral Endopeptidase, Leukotriene, or ADAMTS-5. Grid centers, sizes, spacing (0.375 Å), and docking parameters lock automatically.
 4. Upload one of the bundled receptors (PDBQT) and select ligands from the endogenous ligand set before running AD4 map building or docking.
 
@@ -111,7 +111,6 @@ Executables and parameters are auto-detected from `Files_for_GUI/`. Ensure permi
 ## Contact
 Questions, bug reports, or collaboration requests: **Dr. Sivanesan Dakshanamurthy** — sd233@georgetown.edu
 ---
-
 
 
 

@@ -1,7 +1,7 @@
-# MetalBind Setup Instructions
+# MBind Setup Instructions
 
 ## Overview
-MetalBind is a Streamlit-based GUI for AutoDock Vina and AutoDock4 (AD4) metalloprotein docking. The Demo tab is configured for 8 Zinc Metal Proteins.
+MBind is a Streamlit-based GUI for AutoDock Vina and AutoDock4 (AD4) metalloprotein docking. The Demo tab is configured for 8 Zinc Metal Proteins.
 
 ## Quick Start
 
@@ -43,8 +43,8 @@ The application will open in your browser at `http://localhost:8501`
 ## Project Structure
 
 ```
-FINAL METALBIND/
-├── MetalBind.py                    # Main Streamlit application
+MBind/
+├── MetalBind.py                    # Main MBind Streamlit application
 ├── README.md                       # Full documentation
 ├── requirements.txt                # Python dependencies
 ├── run_docking.bat                 # Windows launcher script
